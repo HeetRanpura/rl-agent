@@ -1,0 +1,44 @@
+
+============================================================
+  SCHEME ENV EVALUATION
+  Model: Qwen/Qwen2.5-Coder-7B-Instruct
+============================================================
+
+============================================================
+  TASK 1/4
+============================================================
+  Profile : {'age': '29', 'income': '1757', 'occupation': 'carpenter', 'has_aadhaar': 'True', 'marital_status': 'widowed'}
+  Missing : []
+  Step 01: approve_scheme('PMKVY') -> reward=10.0, done=True
+  GRADER SCORE: 1.0 / 1.0
+
+============================================================
+  TASK 2/4
+============================================================
+  Profile : {'age': '22', 'income': '3868', 'number_of_children': '2'}
+  Missing : ['occupation', 'has_aadhaar']
+  Step 01: ask_question('occupation') -> reward=1.0, done=False
+  Step 02: request_document('aadhaar_card') -> reward=0.5, done=False
+  Step 03: ask_question('has_aadhaar') -> reward=1.0, done=False
+  Step 04: approve_scheme('MGNREGS') -> reward=10.0, done=True
+  GRADER SCORE: 1.0 / 1.0
+
+============================================================
+  TASK 3/4
+============================================================
+  Profile : {'age': '28', 'income': '11806', 'occupation': 'carpenter', 'has_aadhaar': 'True', 'state_of_residence': 'Gujarat', 'bank_name': 'SBI', 'number_of_children': '3'}
+  Missing : []
+  Step 01: reject_applicant('Income exceeds the eligibility threshold for PMKVY.') -> reward=5.0, done=True
+  GRADER SCORE: 1.0 / 1.0
+
+============================================================
+  TASK 4/4
+============================================================
+  Profile : {'age': '39', 'income': '3549', 'occupation': 'student', 'has_aadhaar': 'True', 'marital_status': 'widowed', 'number_of_children': '2', 'bank_name': 'Bank of Baroda'}
+  Missing : []
+  Step 01: escalate('') -> reward=10.0, done=True
+  GRADER SCORE: 1.0 / 1.0
+
+============================================================
+  FINAL SCORES: Avg 1.00/1.0
+============================================================

@@ -1,0 +1,44 @@
+
+============================================================
+  SCHEME ENV EVALUATION
+  Model: microsoft/Phi-3-mini-4k-instruct
+============================================================
+
+============================================================
+  TASK 1/4
+============================================================
+  Profile : {'age': '33', 'income': '2398', 'occupation': 'mason', 'has_aadhaar': 'True', 'number_of_children': '1'}
+  Missing : []
+
+
+--- STDERR ---
+Traceback (most recent call last):
+  File "/Users/advikdivekar/Desktop/OpenEnv/scheme_env/inference.py", line 98, in <module>
+    if __name__ == "__main__": main()
+                               ~~~~^^
+  File "/Users/advikdivekar/Desktop/OpenEnv/scheme_env/inference.py", line 94, in main
+    scores = {task: run_episode(task) for task in [1, 2, 3, 4]}
+                    ~~~~~~~~~~~^^^^^^
+  File "/Users/advikdivekar/Desktop/OpenEnv/scheme_env/inference.py", line 72, in run_episode
+    action, raw_response = get_agent_action(obs, history)
+                           ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/Users/advikdivekar/Desktop/OpenEnv/scheme_env/inference.py", line 52, in get_agent_action
+    response = client.chat.completions.create(model=MODEL_NAME, messages=messages, max_tokens=100, temperature=0.0)
+  File "/Users/advikdivekar/Desktop/OpenEnv/venv/lib/python3.14/site-packages/openai/_utils/_utils.py", line 286, in wrapper
+    return func(*args, **kwargs)
+  File "/Users/advikdivekar/Desktop/OpenEnv/venv/lib/python3.14/site-packages/openai/resources/chat/completions/completions.py", line 1211, in create
+    return self._post(
+           ~~~~~~~~~~^
+        "/chat/completions",
+        ^^^^^^^^^^^^^^^^^^^^
+    ...<47 lines>...
+        stream_cls=Stream[ChatCompletionChunk],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/advikdivekar/Desktop/OpenEnv/venv/lib/python3.14/site-packages/openai/_base_client.py", line 1297, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/advikdivekar/Desktop/OpenEnv/venv/lib/python3.14/site-packages/openai/_base_client.py", line 1070, in request
+    raise self._make_status_error_from_response(err.response) from None
+openai.BadRequestError: Error code: 400 - {'error': {'message': "The requested model 'microsoft/Phi-3-mini-4k-instruct' is not supported by any provider you have enabled.", 'type': 'invalid_request_error', 'param': 'model', 'code': 'model_not_supported'}}

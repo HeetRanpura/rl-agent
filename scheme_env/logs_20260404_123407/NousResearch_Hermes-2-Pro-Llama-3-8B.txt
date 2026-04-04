@@ -1,0 +1,48 @@
+
+============================================================
+  SCHEME ENV EVALUATION
+  Model: NousResearch/Hermes-2-Pro-Llama-3-8B
+============================================================
+
+============================================================
+  TASK 1/4
+============================================================
+  Profile : {'age': '32', 'income': '6054', 'occupation': 'mason', 'has_aadhaar': 'True', 'number_of_children': '2', 'state_of_residence': 'Bihar'}
+  Missing : []
+  Step 01: evaluate_eligibility('PMKVY') -> reward=-1.0, done=False
+  Step 02: ask_question('income') -> reward=-1.0, done=False
+  Step 03: evaluate_eligibility('MGNREGS') -> reward=-1.0, done=False
+  Step 04: evaluate_eligibility('PMAY') -> reward=-1.0, done=False
+
+
+--- STDERR ---
+Traceback (most recent call last):
+  File "/Users/advikdivekar/Desktop/OpenEnv/scheme_env/inference.py", line 98, in <module>
+    if __name__ == "__main__": main()
+                               ~~~~^^
+  File "/Users/advikdivekar/Desktop/OpenEnv/scheme_env/inference.py", line 94, in main
+    scores = {task: run_episode(task) for task in [1, 2, 3, 4]}
+                    ~~~~~~~~~~~^^^^^^
+  File "/Users/advikdivekar/Desktop/OpenEnv/scheme_env/inference.py", line 72, in run_episode
+    action, raw_response = get_agent_action(obs, history)
+                           ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/Users/advikdivekar/Desktop/OpenEnv/scheme_env/inference.py", line 52, in get_agent_action
+    response = client.chat.completions.create(model=MODEL_NAME, messages=messages, max_tokens=100, temperature=0.0)
+  File "/Users/advikdivekar/Desktop/OpenEnv/venv/lib/python3.14/site-packages/openai/_utils/_utils.py", line 286, in wrapper
+    return func(*args, **kwargs)
+  File "/Users/advikdivekar/Desktop/OpenEnv/venv/lib/python3.14/site-packages/openai/resources/chat/completions/completions.py", line 1211, in create
+    return self._post(
+           ~~~~~~~~~~^
+        "/chat/completions",
+        ^^^^^^^^^^^^^^^^^^^^
+    ...<47 lines>...
+        stream_cls=Stream[ChatCompletionChunk],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/advikdivekar/Desktop/OpenEnv/venv/lib/python3.14/site-packages/openai/_base_client.py", line 1297, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/advikdivekar/Desktop/OpenEnv/venv/lib/python3.14/site-packages/openai/_base_client.py", line 1070, in request
+    raise self._make_status_error_from_response(err.response) from None
+openai.APIStatusError: Error code: 402 - {'error': 'You have depleted your monthly included credits. Purchase pre-paid credits to continue using Inference Providers. Alternatively, subscribe to PRO to get 20x more included usage.'}
