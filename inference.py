@@ -8,7 +8,7 @@ import re
 sys.stdout.reconfigure(encoding="utf-8")
 from openai import OpenAI
 
-# ── Environment variables (all required by hackathon spec) ──────────────────
+# ── Environment variables 
 API_BASE_URL   = os.getenv("API_BASE_URL",   "https://api.openai.com/v1")
 MODEL_NAME     = os.getenv("MODEL_NAME",     "gpt-4o-mini")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
