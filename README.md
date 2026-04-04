@@ -84,6 +84,54 @@ ENV_URL=http://localhost:7860 \
 python inference.py
 ```
 
+## Running Benchmarks
+
+Run the benchmark executor as usual:
+
+```bash
+python benchmark_runner.py
+```
+
+This produces:
+
+- `leaderboard_<timestamp>.csv`
+- `logs_<timestamp>/`
+- `run_manifest_<timestamp>.json`
+- `reports/report_<timestamp>/...`
+
+The logs are the authoritative source for benchmark reporting because they contain the real task trajectories, scores, and stderr details.
+At the end of `benchmark_runner.py`, the report generator runs automatically for the same timestamped benchmark artifacts.
+
+## Generating Visual Reports
+
+Generate a report for the latest benchmark run:
+
+```bash
+python benchmark_report.py --latest
+```
+
+Generate a report for a specific run:
+
+```bash
+python benchmark_report.py --timestamp 20260404_124255
+```
+
+Generate a report from explicit artifact paths:
+
+```bash
+python benchmark_report.py \
+  --csv leaderboard_20260404_124255.csv \
+  --logs-dir logs_20260404_124255
+```
+
+The report output is written to:
+
+- `reports/report_<timestamp>/average_scores.png`
+- `reports/report_<timestamp>/task_heatmap.png`
+- `reports/report_<timestamp>/efficiency_scatter.png`
+- `reports/report_<timestamp>/results.json`
+- `reports/report_<timestamp>/summary.csv`
+
 ## Baseline Scores
 
 | Task | Score |

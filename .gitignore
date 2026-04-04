@@ -20,3 +20,9 @@ leaderboard_*.csv
 # Environment
 .env
 .env
+
+# Benchmark reporting outputs
+reports/.DS_Store
+reports/report_*/
+reports/.matplotlib/
+run_manifest_*.json
