@@ -1,5 +1,0 @@
-Model,Status,Task 1,Task 2,Task 3,Task 4,Average Score
-Qwen/Qwen2.5-7B-Instruct,Completed,0.0,0.0,0.0,0.0,0.0
-Qwen/Qwen2.5-Coder-7B-Instruct,Completed,0.0,0.0,0.0,0.0,0.0
-microsoft/Phi-3-mini-4k-instruct,Error,0,0,0,0,0
-NousResearch/Hermes-2-Pro-Llama-3-8B,Error,0,0,0,0,0

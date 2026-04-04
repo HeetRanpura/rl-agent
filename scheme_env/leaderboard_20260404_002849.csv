@@ -1,8 +1,0 @@
-Model,Status,Task 1,Task 2,Task 3,Average Score
-Qwen/Qwen2.5-7B-Instruct,Completed,1.0,1.0,1.0,1.0
-Qwen/Qwen2.5-14B-Instruct,Completed,0.0,0.0,0.0,0.0
-Qwen/Qwen2.5-Coder-7B-Instruct,Completed,1.0,1.0,1.0,1.0
-microsoft/Phi-3-mini-4k-instruct,Completed,0.0,0.0,0.0,0.0
-microsoft/Phi-3-small-8k-instruct,Completed,0.0,0.0,0.0,0.0
-NousResearch/Hermes-2-Pro-Llama-3-8B,Completed,1.0,1.0,1.0,1.0
-deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct,Completed,0.0,0.0,0.0,0.0
