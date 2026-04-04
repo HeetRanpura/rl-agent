@@ -97,8 +97,10 @@ This produces:
 - `leaderboard_<timestamp>.csv`
 - `logs_<timestamp>/`
 - `run_manifest_<timestamp>.json`
+- `reports/report_<timestamp>/...`
 
 The logs are the authoritative source for benchmark reporting because they contain the real task trajectories, scores, and stderr details.
+At the end of `benchmark_runner.py`, the report generator runs automatically for the same timestamped benchmark artifacts.
 
 ## Generating Visual Reports
 

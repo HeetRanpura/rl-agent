@@ -1,4 +1,4 @@
-import os, asyncio, csv, json, re
+import os, asyncio, csv, json, re, sys
 from datetime import datetime
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
@@ -90,6 +90,31 @@ def write_manifest():
     with open(MANIFEST_FILE, "w") as handle:
         json.dump(manifest, handle, indent=2)
 
+
+async def run_report_generation() -> None:
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "benchmark_report.py",
+        "--timestamp",
+        TIMESTAMP,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout_bytes, stderr_bytes = await proc.communicate()
+    stdout = stdout_bytes.decode("utf-8").strip()
+    stderr = stderr_bytes.decode("utf-8").strip()
+
+    if proc.returncode == 0:
+        print("\nReport generation completed.")
+        if stdout:
+            print(stdout)
+    else:
+        print("\nReport generation failed.")
+        if stdout:
+            print(stdout)
+        if stderr:
+            print(stderr)
+
 async def main():
     os.makedirs(LOG_DIR, exist_ok=True)
     write_manifest()
@@ -100,6 +125,7 @@ async def main():
     # Run sequentially because MAX_CONCURRENT is 1
     for task in tasks: await task 
     await writer
+    await run_report_generation()
     print(f"\nDone! Check {RESULTS_FILE}, {LOG_DIR}, and {MANIFEST_FILE}")
 
 if __name__ == "__main__": asyncio.run(main())
