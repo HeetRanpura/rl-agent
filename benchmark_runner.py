@@ -1,5 +1,6 @@
 import os, asyncio, csv, json, re, sys
 from datetime import datetime
+from pathlib import Path
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 API_TOKEN = os.getenv("HF_TOKEN", "") 
@@ -17,8 +18,11 @@ MODELS_TO_TEST = [
 ]
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
-RESULTS_FILE, LOG_DIR = f"leaderboard_{TIMESTAMP}.csv", f"logs_{TIMESTAMP}"
-MANIFEST_FILE = f"run_manifest_{TIMESTAMP}.json"
+REPORTS_DIR = Path("reports")
+RUN_DIR = REPORTS_DIR / f"report_{TIMESTAMP}"
+RESULTS_FILE = RUN_DIR / f"leaderboard_{TIMESTAMP}.csv"
+LOG_DIR = RUN_DIR / f"logs_{TIMESTAMP}"
+MANIFEST_FILE = RUN_DIR / f"run_manifest_{TIMESTAMP}.json"
 
 def extract_scores(output_text: str) -> dict:
     scores = {"Task 1": 0.0, "Task 2": 0.0, "Task 3": 0.0, "Average": 0.0}
@@ -49,7 +53,7 @@ def extract_scores(output_text: str) -> dict:
 
 async def run_model(model: str, queue: asyncio.Queue, idx: int, total: int):
     print(f"[{idx}/{total}] Testing: {model}...")
-    log_filepath = os.path.join(LOG_DIR, f"{model.replace('/', '_')}.txt")
+    log_filepath = LOG_DIR / f"{model.replace('/', '_')}.txt"
     env = os.environ.copy()
     env.update({"MODEL_NAME": model, "API_BASE_URL": API_BASE_URL, "HF_TOKEN": API_TOKEN, "ENV_URL": ENV_URL})
 
@@ -62,12 +66,12 @@ async def run_model(model: str, queue: asyncio.Queue, idx: int, total: int):
 
         if proc.returncode == 0:
             s = extract_scores(stdout)
-            await queue.put({"model": model, "status": "Completed", "t1": s["Task 1"], "t2": s["Task 2"], "t3": s["Task 3"], "t4": s["Task 4"], "avg": s["Average"]})
+            await queue.put({"model": model, "status": "Completed", "t1": s["Task 1"], "t2": s["Task 2"], "t3": s["Task 3"], "avg": s["Average"]})
         else:
-            await queue.put({"model": model, "status": "Error", "t1": 0, "t2": 0, "t3": 0, "t4": 0, "avg": 0})
+            await queue.put({"model": model, "status": "Error", "t1": 0, "t2": 0, "t3": 0, "avg": 0})
     except asyncio.TimeoutError:
         proc.kill()
-        await queue.put({"model": model, "status": "Timeout", "t1": 0, "t2": 0, "t3": 0, "t4": 0, "avg": 0})
+        await queue.put({"model": model, "status": "Timeout", "t1": 0, "t2": 0, "t3": 0, "avg": 0})
 
 async def csv_writer(queue: asyncio.Queue, total: int):
     with open(RESULTS_FILE, "w", newline="") as f:
@@ -80,8 +84,9 @@ async def csv_writer(queue: asyncio.Queue, total: int):
 def write_manifest():
     manifest = {
         "timestamp": TIMESTAMP,
-        "results_file": RESULTS_FILE,
-        "logs_dir": LOG_DIR,
+        "run_dir": str(RUN_DIR),
+        "results_file": str(RESULTS_FILE),
+        "logs_dir": str(LOG_DIR),
         "models": MODELS_TO_TEST,
         "timeout_seconds": TIMEOUT_SECONDS,
         "env_url": ENV_URL,
@@ -95,8 +100,8 @@ async def run_report_generation() -> None:
     proc = await asyncio.create_subprocess_exec(
         sys.executable,
         "benchmark_report.py",
-        "--timestamp",
-        TIMESTAMP,
+        "--run-dir",
+        str(RUN_DIR),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -116,7 +121,8 @@ async def run_report_generation() -> None:
             print(stderr)
 
 async def main():
-    os.makedirs(LOG_DIR, exist_ok=True)
+    RUN_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     write_manifest()
     queue = asyncio.Queue()
     tasks = [run_model(model, queue, i+1, len(MODELS_TO_TEST)) for i, model in enumerate(MODELS_TO_TEST)]
@@ -126,6 +132,6 @@ async def main():
     for task in tasks: await task 
     await writer
     await run_report_generation()
-    print(f"\nDone! Check {RESULTS_FILE}, {LOG_DIR}, and {MANIFEST_FILE}")
+    print(f"\nDone! Check {RUN_DIR}")
 
 if __name__ == "__main__": asyncio.run(main())

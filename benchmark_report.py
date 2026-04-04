@@ -124,6 +124,7 @@ class ReportBundle:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate visual reports for scheme_env benchmark runs.")
     parser.add_argument("--timestamp", help="Benchmark timestamp like 20260404_124255.")
+    parser.add_argument("--run-dir", type=Path, help="Path to a benchmark run bundle like reports/report_<timestamp>.")
     parser.add_argument("--csv", dest="csv_path", type=Path, help="Path to leaderboard CSV.")
     parser.add_argument("--logs-dir", type=Path, help="Path to logs directory.")
     parser.add_argument("--latest", action="store_true", help="Use the latest discovered artifact pair.")
@@ -132,15 +133,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--strict", action="store_true", help="Exit non-zero on parse or reconciliation warnings.")
     args = parser.parse_args()
 
-    selected = int(bool(args.timestamp)) + int(bool(args.latest)) + int(bool(args.csv_path or args.logs_dir))
+    selected = int(bool(args.timestamp)) + int(bool(args.latest)) + int(bool(args.run_dir)) + int(bool(args.csv_path or args.logs_dir))
     if selected != 1:
-        parser.error("Provide exactly one of --timestamp, --latest, or --csv with --logs-dir.")
+        parser.error("Provide exactly one of --timestamp, --latest, --run-dir, or --csv with --logs-dir.")
     if bool(args.csv_path) != bool(args.logs_dir):
         parser.error("--csv and --logs-dir must be provided together.")
     return args
 
 
 def discover_artifact_pairs(base_dir: Path) -> list[tuple[str, Optional[Path], Path]]:
+    pairs: dict[str, tuple[Optional[Path], Path]] = {}
+
+    for run_dir in sorted(base_dir.glob("reports/report_*")):
+        if not run_dir.is_dir():
+            continue
+        timestamp = run_dir.name.replace("report_", "")
+        csv_path = run_dir / f"leaderboard_{timestamp}.csv"
+        logs_dir = run_dir / f"logs_{timestamp}"
+        if logs_dir.is_dir():
+            pairs[timestamp] = (csv_path if csv_path.exists() else None, logs_dir)
+
     manifest_map: dict[str, dict] = {}
     for manifest_path in base_dir.glob("run_manifest_*.json"):
         try:
@@ -161,30 +173,43 @@ def discover_artifact_pairs(base_dir: Path) -> list[tuple[str, Optional[Path], P
         if logs_name:
             logs_map.setdefault(timestamp, base_dir / logs_name)
     timestamps = sorted(set(csv_map) | set(logs_map) | set(manifest_map))
-    return [(timestamp, csv_map.get(timestamp), logs_map[timestamp]) for timestamp in timestamps if timestamp in logs_map]
+    root_pairs = [(timestamp, csv_map.get(timestamp), logs_map[timestamp]) for timestamp in timestamps if timestamp in logs_map]
+    for timestamp, csv_path, logs_dir in root_pairs:
+        pairs.setdefault(timestamp, (csv_path, logs_dir))
+    return [(timestamp, value[0], value[1]) for timestamp, value in sorted(pairs.items())]
 
 
 def resolve_inputs(args: argparse.Namespace, base_dir: Path) -> tuple[str, Optional[Path], Path, Path]:
-    if args.timestamp:
+    if args.run_dir:
+        run_dir = args.run_dir
+        timestamp = run_dir.name.replace("report_", "")
+        csv_path = run_dir / f"leaderboard_{timestamp}.csv"
+        logs_dir = run_dir / f"logs_{timestamp}"
+        output_dir = run_dir
+    elif args.timestamp:
         timestamp = args.timestamp
-        csv_path = base_dir / f"leaderboard_{timestamp}.csv"
-        logs_dir = base_dir / f"logs_{timestamp}"
+        run_dir = base_dir / "reports" / f"report_{timestamp}"
+        csv_path = run_dir / f"leaderboard_{timestamp}.csv"
+        logs_dir = run_dir / f"logs_{timestamp}"
+        output_dir = run_dir
     elif args.latest:
         pairs = discover_artifact_pairs(base_dir)
         if not pairs:
             raise SystemExit("No benchmark artifacts found.")
         timestamp, csv_path, logs_dir = pairs[-1]
+        output_dir = base_dir / "reports" / f"report_{timestamp}"
     else:
         csv_path = args.csv_path
         logs_dir = args.logs_dir
         timestamp = logs_dir.name.replace("logs_", "")
+        output_dir = args.output_dir or (base_dir / "reports" / f"report_{timestamp}")
 
     if not logs_dir.exists():
         raise SystemExit(f"Logs directory not found: {logs_dir}")
     if csv_path is not None and not csv_path.exists():
         csv_path = None
 
-    output_dir = args.output_dir or (base_dir / "reports" / f"report_{timestamp}")
+    output_dir = args.output_dir or output_dir
     return timestamp, csv_path, logs_dir, output_dir
 
 

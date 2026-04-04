@@ -6,10 +6,6 @@ venv/
 .venv/
 *.egg-info/
 
-# Logs and leaderboards (generated at runtime)
-logs_*/
-leaderboard_*.csv
-
 # IDE
 .vscode/
 .idea/
@@ -25,4 +21,3 @@ leaderboard_*.csv
 reports/.DS_Store
 reports/report_*/
 reports/.matplotlib/
-run_manifest_*.json

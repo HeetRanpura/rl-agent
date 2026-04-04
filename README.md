@@ -94,10 +94,14 @@ python benchmark_runner.py
 
 This produces:
 
-- `leaderboard_<timestamp>.csv`
-- `logs_<timestamp>/`
-- `run_manifest_<timestamp>.json`
-- `reports/report_<timestamp>/...`
+- `reports/report_<timestamp>/leaderboard_<timestamp>.csv`
+- `reports/report_<timestamp>/logs_<timestamp>/`
+- `reports/report_<timestamp>/run_manifest_<timestamp>.json`
+- `reports/report_<timestamp>/average_scores.png`
+- `reports/report_<timestamp>/task_heatmap.png`
+- `reports/report_<timestamp>/efficiency_scatter.png`
+- `reports/report_<timestamp>/results.json`
+- `reports/report_<timestamp>/summary.csv`
 
 The logs are the authoritative source for benchmark reporting because they contain the real task trajectories, scores, and stderr details.
 At the end of `benchmark_runner.py`, the report generator runs automatically for the same timestamped benchmark artifacts.
@@ -116,12 +120,18 @@ Generate a report for a specific run:
 python benchmark_report.py --timestamp 20260404_124255
 ```
 
+Generate a report from an explicit bundled run directory:
+
+```bash
+python benchmark_report.py --run-dir reports/report_20260404_124255
+```
+
 Generate a report from explicit artifact paths:
 
 ```bash
 python benchmark_report.py \
-  --csv leaderboard_20260404_124255.csv \
-  --logs-dir logs_20260404_124255
+  --csv reports/report_20260404_124255/leaderboard_20260404_124255.csv \
+  --logs-dir reports/report_20260404_124255/logs_20260404_124255
 ```
 
 The report output is written to:
