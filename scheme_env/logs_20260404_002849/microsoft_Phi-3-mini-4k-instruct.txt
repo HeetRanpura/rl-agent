@@ -1,0 +1,45 @@
+
+============================================================
+  SCHEME ENV — INFERENCE EVALUATION
+  Model : microsoft/Phi-3-mini-4k-instruct
+  Env   : http://localhost:7860
+============================================================
+[START] task=scheme_discovery env=scheme_env model=microsoft/Phi-3-mini-4k-instruct
+
+============================================================
+  TASK 1/3 — SCHEME_DISCOVERY
+============================================================
+  Profile : {'age': '26', 'income': '4000', 'occupation': 'mason', 'has_aadhaar': 'True'}
+  Missing : []
+  Notif   : [TASK 1/3 - SCHEME DISCOVERY - Easy] Profile is COMPLETE. No missing data. Identify and ap
+
+  [ERROR] Task 1 failed: Error code: 400 - {'error': {'message': "The requested model 'microsoft/Phi-3-mini-4k-instruct' is not supported by any provider you have enabled.", 'type': 'invalid_request_error', 'param': 'model', 'code': 'model_not_supported'}}
+[START] task=missing_data env=scheme_env model=microsoft/Phi-3-mini-4k-instruct
+
+============================================================
+  TASK 2/3 — MISSING_DATA
+============================================================
+  Profile : {'age': '35', 'income': '3000'}
+  Missing : ['has_aadhaar', 'occupation']
+  Notif   : [TASK 2/3 - MISSING DATA - Medium] Profile is INCOMPLETE. You MUST ask for ALL missing fie
+
+  [ERROR] Task 2 failed: Error code: 400 - {'error': {'message': "The requested model 'microsoft/Phi-3-mini-4k-instruct' is not supported by any provider you have enabled.", 'type': 'invalid_request_error', 'param': 'model', 'code': 'model_not_supported'}}
+[START] task=conflict_resolution env=scheme_env model=microsoft/Phi-3-mini-4k-instruct
+
+============================================================
+  TASK 3/3 — CONFLICT_RESOLUTION
+============================================================
+  Profile : {'age': '14', 'income': '500000', 'occupation': 'student', 'has_aadhaar': 'False'}
+  Missing : []
+  Notif   : [TASK 3/3 - CONFLICT RESOLUTION - Hard] Profile is COMPLETE. Age is 14, income is 500000. 
+
+  [ERROR] Task 3 failed: Error code: 400 - {'error': {'message': "The requested model 'microsoft/Phi-3-mini-4k-instruct' is not supported by any provider you have enabled.", 'type': 'invalid_request_error', 'param': 'model', 'code': 'model_not_supported'}}
+
+============================================================
+  FINAL GRADER SCORES
+============================================================
+  Task 1 (Scheme Discovery)    : 0.0 / 1.0
+  Task 2 (Missing Data)        : 0.0 / 1.0
+  Task 3 (Conflict Resolution) : 0.0 / 1.0
+  Average                      : 0.00 / 1.0
+============================================================

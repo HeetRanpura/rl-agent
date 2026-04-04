@@ -1,255 +1,96 @@
 ---
 title: Scheme Env Environment Server
-emoji: 🏈
-colorFrom: purple
-colorTo: pink
+emoji: 🏛️
+colorFrom: orange
+colorTo: green
 sdk: docker
 pinned: false
-app_port: 8000
-base_path: /web
+app_port: 7860
 tags:
   - openenv
 ---
 
-# Scheme Env Environment
+# Indian Government Welfare Officer — RL Environment
 
-A simple test environment that echoes back messages. Perfect for testing the env APIs as well as demonstrating environment usage patterns.
+An open-source Reinforcement Learning environment that simulates the workflow of an Indian Government Welfare Officer. An LLM-based agent must interview applicants, gather missing data, and correctly enroll them in welfare schemes or safely reject ineligible applicants.
 
-## Quick Start
+## Environment Description
 
-The simplest way to use the Scheme Env environment is through the `SchemeEnv` class:
+The agent acts as a welfare officer evaluating applicants for Indian government schemes including PMKVY, MGNREGS, and PMAY. The environment tests the agent's ability to gather information, apply eligibility rules, and make correct enrollment decisions.
 
-```python
-from scheme_env import SchemeAction, SchemeEnv
+## Action Space
 
-try:
-    # Create environment from Docker image
-    scheme_envenv = SchemeEnv.from_docker_image("scheme_env-env:latest")
+| Action | Value | Description |
+|---|---|---|
+| `ask_question` | field name (age/income/occupation/has_aadhaar) | Gather missing applicant data |
+| `request_document` | document name | Request verification documents |
+| `approve_scheme` | scheme name (PMKVY/MGNREGS/PMAY) | Enroll applicant in scheme |
+| `reject_applicant` | reason string | Reject ineligible applicant |
+| `escalate` | (none) | Escalate to senior officer |
 
-    # Reset
-    result = scheme_envenv.reset()
-    print(f"Reset: {result.observation.echoed_message}")
+## Observation Space
 
-    # Send multiple messages
-    messages = ["Hello, World!", "Testing echo", "Final message"]
+| Field | Type | Description |
+|---|---|---|
+| `known_profile` | Dict | Applicant data collected so far |
+| `missing_data` | List | Fields that still need to be gathered |
+| `notification` | String | Environment feedback on last action |
+| `is_terminated` | Bool | Whether the episode has ended |
 
-    for msg in messages:
-        result = scheme_envenv.step(SchemeAction(message=msg))
-        print(f"Sent: '{msg}'")
-        print(f"  → Echoed: '{result.observation.echoed_message}'")
-        print(f"  → Length: {result.observation.message_length}")
-        print(f"  → Reward: {result.reward}")
+## Tasks
 
-finally:
-    # Always clean up
-    scheme_envenv.close()
-```
+### Task 1 — Scheme Discovery (Easy)
+Complete applicant profile provided. Agent must identify and approve the optimal scheme (PMKVY). Score: 1.0 for optimal scheme, 0.5 for eligible but suboptimal, 0.0 for wrong/timeout.
 
-That's it! The `SchemeEnv.from_docker_image()` method handles:
-- Starting the Docker container
-- Waiting for the server to be ready
-- Connecting to the environment
-- Container cleanup when you call `close()`
+### Task 2 — Missing Data (Medium)
+Applicant is eligible for MGNREGS but critical fields are missing. Agent must gather all missing data before approving. Score: 1.0 for full data collection + correct approval, 0.0 for premature approval.
 
-## Building the Docker Image
+### Task 3 — Conflict Resolution (Hard)
+Applicant profile contains disqualifying criteria (age 14, income 500000). Agent must recognize ineligibility and reject. Score: 1.0 for rejection, 0.0 for any approval attempt.
 
-Before using the environment, you need to build the Docker image:
+## Reward Function
 
-```bash
-# From project root
-docker build -t scheme_env-env:latest -f server/Dockerfile .
-```
+| Event | Reward |
+|---|---|
+| Valid question from missing_data | +1.0 |
+| Redundant or irrelevant question | -1.0 |
+| Correct optimal scheme approval | +10.0 |
+| Correct rejection of ineligible | +5.0 |
+| Suboptimal but eligible scheme | +3.0 |
+| Ineligible scheme approval | -5.0 |
+| Premature approval (Task 2) | -5.0 |
+| Safety violation (Task 3) | -5.0 |
+| Timeout (12 steps) | -2.0 |
 
-## Deploying to Hugging Face Spaces
+## Scheme Eligibility Rules
 
-You can easily deploy your OpenEnv environment to Hugging Face Spaces using the `openenv push` command:
+- **PMKVY**: Age 18-35, skilled worker (mason/carpenter), income < 10000
+- **MGNREGS**: Age 18-60, rural labourer (farm_labourer), has_aadhaar = True
+- **PMAY**: Age 21-55, any occupation, income < 6000, has_aadhaar = True
 
-```bash
-# From the environment directory (where openenv.yaml is located)
-openenv push
-
-# Or specify options
-openenv push --namespace my-org --private
-```
-
-The `openenv push` command will:
-1. Validate that the directory is an OpenEnv environment (checks for `openenv.yaml`)
-2. Prepare a custom build for Hugging Face Docker space (enables web interface)
-3. Upload to Hugging Face (ensuring you're logged in)
-
-### Prerequisites
-
-- Authenticate with Hugging Face: The command will prompt for login if not already authenticated
-
-### Options
-
-- `--directory`, `-d`: Directory containing the OpenEnv environment (defaults to current directory)
-- `--repo-id`, `-r`: Repository ID in format 'username/repo-name' (defaults to 'username/env-name' from openenv.yaml)
-- `--base-image`, `-b`: Base Docker image to use (overrides Dockerfile FROM)
-- `--private`: Deploy the space as private (default: public)
-
-### Examples
+## Setup
 
 ```bash
-# Push to your personal namespace (defaults to username/env-name from openenv.yaml)
-openenv push
-
-# Push to a specific repository
-openenv push --repo-id my-org/my-env
-
-# Push with a custom base image
-openenv push --base-image ghcr.io/meta-pytorch/openenv-base:latest
-
-# Push as a private space
-openenv push --private
-
-# Combine options
-openenv push --repo-id my-org/my-env --base-image custom-base:latest --private
+docker build -t scheme_env-env:latest .
+docker run -p 7860:7860 scheme_env-env:latest
 ```
 
-After deployment, your space will be available at:
-`https://huggingface.co/spaces/<repo-id>`
-
-The deployed space includes:
-- **Web Interface** at `/web` - Interactive UI for exploring the environment
-- **API Documentation** at `/docs` - Full OpenAPI/Swagger interface
-- **Health Check** at `/health` - Container health monitoring
-- **WebSocket** at `/ws` - Persistent session endpoint for low-latency interactions
-
-## Environment Details
-
-### Action
-**SchemeAction**: Contains a single field
-- `message` (str) - The message to echo back
-
-### Observation
-**SchemeObservation**: Contains the echo response and metadata
-- `echoed_message` (str) - The message echoed back
-- `message_length` (int) - Length of the message
-- `reward` (float) - Reward based on message length (length × 0.1)
-- `done` (bool) - Always False for echo environment
-- `metadata` (dict) - Additional info like step count
-
-### Reward
-The reward is calculated as: `message_length × 0.1`
-- "Hi" → reward: 0.2
-- "Hello, World!" → reward: 1.3
-- Empty message → reward: 0.0
-
-## Advanced Usage
-
-### Connecting to an Existing Server
-
-If you already have a Scheme Env environment server running, you can connect directly:
-
-```python
-from scheme_env import SchemeEnv
-
-# Connect to existing server
-scheme_envenv = SchemeEnv(base_url="<ENV_HTTP_URL_HERE>")
-
-# Use as normal
-result = scheme_envenv.reset()
-result = scheme_envenv.step(SchemeAction(message="Hello!"))
-```
-
-Note: When connecting to an existing server, `scheme_envenv.close()` will NOT stop the server.
-
-### Using the Context Manager
-
-The client supports context manager usage for automatic connection management:
-
-```python
-from scheme_env import SchemeAction, SchemeEnv
-
-# Connect with context manager (auto-connects and closes)
-with SchemeEnv(base_url="http://localhost:8000") as env:
-    result = env.reset()
-    print(f"Reset: {result.observation.echoed_message}")
-    # Multiple steps with low latency
-    for msg in ["Hello", "World", "!"]:
-        result = env.step(SchemeAction(message=msg))
-        print(f"Echoed: {result.observation.echoed_message}")
-```
-
-The client uses WebSocket connections for:
-- **Lower latency**: No HTTP connection overhead per request
-- **Persistent session**: Server maintains your environment state
-- **Efficient for episodes**: Better for many sequential steps
-
-### Concurrent WebSocket Sessions
-
-The server supports multiple concurrent WebSocket connections. To enable this,
-modify `server/app.py` to use factory mode:
-
-```python
-# In server/app.py - use factory mode for concurrent sessions
-app = create_app(
-    SchemeEnvironment,  # Pass class, not instance
-    SchemeAction,
-    SchemeObservation,
-    max_concurrent_envs=4,  # Allow 4 concurrent sessions
-)
-```
-
-Then multiple clients can connect simultaneously:
-
-```python
-from scheme_env import SchemeAction, SchemeEnv
-from concurrent.futures import ThreadPoolExecutor
-
-def run_episode(client_id: int):
-    with SchemeEnv(base_url="http://localhost:8000") as env:
-        result = env.reset()
-        for i in range(10):
-            result = env.step(SchemeAction(message=f"Client {client_id}, step {i}"))
-        return client_id, result.observation.message_length
-
-# Run 4 episodes concurrently
-with ThreadPoolExecutor(max_workers=4) as executor:
-    results = list(executor.map(run_episode, range(4)))
-```
-
-## Development & Testing
-
-### Direct Environment Testing
-
-Test the environment logic directly without starting the HTTP server:
+## Running Inference
 
 ```bash
-# From the server directory
-python3 server/scheme_env_environment.py
+HF_TOKEN=your_token \
+MODEL_NAME=Qwen/Qwen2.5-7B-Instruct \
+ENV_URL=http://localhost:7860 \
+python inference.py
 ```
 
-This verifies that:
-- Environment resets correctly
-- Step executes actions properly
-- State tracking works
-- Rewards are calculated correctly
+## Baseline Scores
 
-### Running Locally
+| Task | Score |
+|---|---|
+| Task 1 — Scheme Discovery | 1.0 / 1.0 |
+| Task 2 — Missing Data | 1.0 / 1.0 |
+| Task 3 — Conflict Resolution | 1.0 / 1.0 |
+| Average | 1.0 / 1.0 |
 
-Run the server locally for development:
-
-```bash
-uvicorn server.app:app --reload
-```
-
-## Project Structure
-
-```
-scheme_env/
-├── .dockerignore         # Docker build exclusions
-├── __init__.py            # Module exports
-├── README.md              # This file
-├── openenv.yaml           # OpenEnv manifest
-├── pyproject.toml         # Project metadata and dependencies
-├── uv.lock                # Locked dependencies (generated)
-├── client.py              # SchemeEnv client
-├── models.py              # Action and Observation models
-└── server/
-    ├── __init__.py        # Server module exports
-    ├── scheme_env_environment.py  # Core environment logic
-    ├── app.py             # FastAPI application (HTTP + WebSocket endpoints)
-    └── Dockerfile         # Container image definition
-```
+Model: Qwen/Qwen2.5-7B-Instruct via Hugging Face Router

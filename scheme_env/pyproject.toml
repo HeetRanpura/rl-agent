@@ -1,9 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
-
 [build-system]
 requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
@@ -11,26 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "openenv-scheme_env"
 version = "0.1.0"
-description = "Scheme Env environment for OpenEnv"
+description = "Indian Government Welfare Officer RL Environment"
 requires-python = ">=3.10"
 dependencies = [
-    # Core OpenEnv runtime (provides FastAPI server + HTTP client types)
-    # install from github
-    # "openenv-core[core] @ git+https://github.com/meta-pytorch/OpenEnv.git",
     "openenv-core[core]>=0.2.2",
-    # Environment-specific dependencies
-    # Add all dependencies needed for your environment here
-    # Examples:
-    # "numpy>=1.19.0",
-    # "torch>=2.0.0",
-    # "gymnasium>=0.29.0",
-    # "openspiel>=1.0.0",
-    # "smolagents>=1.22.0,<2",
-
     "fastapi",
     "uvicorn",
     "pydantic",
-    "openenv-core"
+    "openai",
 ]
 
 [project.optional-dependencies]
@@ -40,8 +22,6 @@ dev = [
 ]
 
 [project.scripts]
-# Server entry point - enables running via: uv run --project . server
-# or: python -m scheme_env.server.app
 server = "scheme_env.server.app:main"
 
 [tool.setuptools]
