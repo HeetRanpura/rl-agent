@@ -150,11 +150,13 @@ def _make_fresh_obs(task: int, persona: dict) -> Observation:
         missing = list(persona["missing_keys"])
 
     elif task == 3:
-        notif   = (
-            "[TASK 3/4 - BOUNDARY FRAUD DETECTION - Hard] "
-            "Profile is COMPLETE. Review ALL scheme income thresholds with strict "
-            "integer precision. Approve only if ALL criteria are satisfied. "
-            "Otherwise use reject_applicant."
+        notif = (
+            f"[TASK 3/4 - BOUNDARY FRAUD DETECTION - Hard] "
+            f"Profile is COMPLETE. Applicant income is {persona['income']} rupees. "
+            f"PMKVY requires income of 9999 or below. "
+            f"PMAY requires income of 5999 or below. "
+            f"Calculate: is {persona['income']} <= 9999? If NO — reject_applicant. "
+            f"Do not approve any scheme unless the integer comparison passes."
         )
         missing = []
 

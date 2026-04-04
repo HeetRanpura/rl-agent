@@ -26,3 +26,6 @@ reports/.DS_Store
 reports/report_*/
 reports/.matplotlib/
 run_manifest_*.json
+benchmark_report.py
+run_manifest_*.json
+reports/
