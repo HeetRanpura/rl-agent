@@ -1,7 +1,7 @@
 ---
 title: Scheme Enrollment Env
 emoji: 🏛️
-colorFrom: orange
+colorFrom: blue
 colorTo: green
 sdk: docker
 pinned: false
