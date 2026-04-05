@@ -8,7 +8,10 @@ import re
 sys.stdout.reconfigure(encoding="utf-8")
 from openai import OpenAI
 
-# All credentials from environment — never hardcoded
+# =========================================================
+# ENVIRONMENT CONFIGURATION
+# All credentials read from environment — never hardcoded.
+# =========================================================
 API_BASE_URL   = os.getenv("API_BASE_URL",   "https://router.huggingface.co/v1")
 MODEL_NAME     = os.getenv("MODEL_NAME",     "Qwen/Qwen2.5-7B-Instruct")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
@@ -68,101 +71,128 @@ def log_end(success: bool, steps: int, score: float, rewards: list) -> None:
 
 
 # =========================================================
-# SYSTEM PROMPT — OPTION A HARDENED VERSION
+# SYSTEM PROMPT
 #
-# KEY DIFFERENCES from original:
-# 1. No escalation recipe — agent must infer when to escalate
-# 2. No income/threshold hints in task descriptions
-# 3. Explicit PMAY > PMKVY priority when both eligible
-# 4. Document verification workflow described generically
-# 5. No "SYSTEM ALERT" pattern matching guidance
+# This is what a real CSC operator knows on day one of the job.
+# It contains:
+#   - Scheme eligibility rules (job training, not hints)
+#   - Available actions and their JSON format
+#   - Response format requirement with <think> block
+#
+# It does NOT contain:
+#   - Which fields are traps (agent learns via -1.0 penalty)
+#   - Which field to ask next (agent decides from missing_data)
+#   - Task-specific guidance (agent reasons from observation)
+#   - Any DECISION recommendation (agent must conclude independently)
+#   - Any hint about what profile patterns mean
+#
+# This design ensures the reward signal is the only teacher.
+# The agent improves by experiencing consequences, not by reading
+# instructions that solve the task for it.
 # =========================================================
 
 SYSTEM_PROMPT = """You are a CSC (Common Service Centre) operator evaluating welfare scheme applications in rural India.
 Your decisions directly affect whether vulnerable citizens receive government support.
+You must reason carefully and act only on verified information.
 
-=== AVAILABLE ACTIONS — respond ONLY with valid JSON ===
-{"action_type": "ask_question",    "value": "<field_name>"}
-  Use ONLY for: age, income, occupation, has_aadhaar
+=== MANDATORY RESPONSE FORMAT ===
+You MUST respond in this exact format for every action:
+<think>
+[Your step-by-step reasoning. Check what data you have, what is missing,
+what the eligibility rules say, and what action is appropriate.]
+</think>
+{"action_type": "...", "value": "..."}
 
-{"action_type": "request_document","value": "<document_name>"}
-  Use to verify official records when self-reported data seems unreliable.
-  Key documents: "aadhaar_card" (identity/age), "pan_card" (employment/income)
+Never output JSON without the <think> block. Never skip reasoning.
 
-{"action_type": "approve_scheme",  "value": "<scheme_name>"}
-  Valid schemes: PMKVY, MGNREGS, PMAY
+=== AVAILABLE ACTIONS ===
 
-{"action_type": "reject_applicant","value": "<reason>"}
+{"action_type": "ask_question", "value": "<field_name>"}
+  Request information from the applicant.
+  Valid field names: age, income, occupation, has_aadhaar
 
-{"action_type": "escalate",        "value": ""}
-  Use ONLY when data integrity is genuinely compromised and a human supervisor
-  must review before any decision can be made.
+{"action_type": "request_document", "value": "<document_name>"}
+  Request an official document for verification.
+  aadhaar_card: verifies identity and official age
+  pan_card: verifies employment history and income source
 
-=== SCHEME ELIGIBILITY — ALL conditions must be simultaneously true ===
-PMKVY (skill training, Rs 8,000 stipend):
-  age 18 to 35 inclusive
-  occupation: mason OR carpenter
-  income: 9999 or below (income of 10000 FAILS)
+{"action_type": "approve_scheme", "value": "<scheme_name>"}
+  Enroll the applicant in a welfare scheme.
+  Valid scheme names: PMKVY, MGNREGS, PMAY
+
+{"action_type": "reject_applicant", "value": "<reason>"}
+  Reject the application with a clear reason.
+
+{"action_type": "escalate", "value": ""}
+  Hand off to a senior officer for manual review.
+
+=== SCHEME ELIGIBILITY RULES ===
+All conditions must be simultaneously true. Use strict integer arithmetic.
+
+PMKVY — Pradhan Mantri Kaushal Vikas Yojana (Rs 8,000 skill training stipend):
+  Age: 18 to 35 inclusive
+  Occupation: mason OR carpenter
+  Income: 9,999 or below (income of 10,000 does NOT qualify)
   Aadhaar: not required
 
-MGNREGS (100 days employment guarantee):
-  age 18 to 60 inclusive
-  occupation: farm_labourer ONLY
-  has_aadhaar: must be True
+MGNREGS — Mahatma Gandhi National Rural Employment Guarantee Scheme (100 days employment):
+  Age: 18 to 60 inclusive
+  Occupation: farm_labourer ONLY
+  Aadhaar: required (has_aadhaar must be True)
 
-PMAY (housing grant Rs 1.2 lakh):
-  age 21 to 55 inclusive
-  occupation: any
-  income: 5999 or below (income of 6000 FAILS)
-  has_aadhaar: must be True
+PMAY — Pradhan Mantri Awaas Yojana (Rs 1.2 lakh housing grant):
+  Age: 21 to 55 inclusive
+  Occupation: any
+  Income: 5,999 or below (income of 6,000 does NOT qualify)
+  Aadhaar: required (has_aadhaar must be True)
 
-=== PRIORITY RULE ===
-When multiple schemes apply to the same applicant:
-  PMAY > PMKVY (PMAY provides Rs 1.2 lakh vs PMKVY's Rs 8,000 — always choose the higher benefit)
-  Always approve the scheme with the greatest financial benefit.
+When multiple schemes apply, choose the one with the highest financial benefit.
+Benefit values: PMAY (Rs 1.2 lakh) > MGNREGS (100 days wages) > PMKVY (Rs 8,000)
 
-=== DECISION WORKFLOW ===
-Step 1 — CHECK MISSING DATA: If missing_data is not empty, ask for one field at a time.
-Step 2 — VERIFY IF NEEDED: If any profile field seems inconsistent or self-reported data 
-          may conflict with official records, request the relevant document BEFORE deciding.
-Step 3 — APPLY RULES: Check ALL eligibility conditions with exact integer arithmetic.
-          Convert income strings to integers before comparing to thresholds.
-Step 4 — DECIDE: approve_scheme if eligible, reject_applicant if not.
-          escalate ONLY if you discovered a genuine data integrity conflict that 
-          cannot be resolved without a senior officer.
+=== DECISION PRINCIPLES ===
 
-=== CRITICAL RULES ===
-NOISE TRAP: known_profile may contain marital_status, bank_name, state_of_residence,
-number_of_children, self_reported_age. These are IRRELEVANT. Never ask about them.
-Querying noise fields costs -1.0 and reduces your final score.
+1. Do not make any terminal decision (approve, reject, escalate) while
+   missing_data is not empty. Collect all required information first.
 
-INTEGER PRECISION: income thresholds are absolute integers.
-  PMKVY:  income must be ≤ 9999. income=10000 DISQUALIFIES.
-  PMAY:   income must be ≤ 5999. income=6000  DISQUALIFIES.
+2. Apply eligibility rules with exact integer comparisons.
+   income=9999 qualifies for PMKVY. income=10000 does not.
 
-AGE VERIFICATION: When age is a critical eligibility factor and you have reason
-to doubt the self-reported age, request the aadhaar_card to get the official age.
-The Aadhaar age overrides any self-reported age in the profile.
+3. If official documents reveal information that contradicts the stated
+   profile, the contradiction must be reviewed by a senior officer.
 
-DATA INTEGRITY: If official documents reveal information that directly contradicts
-the applicant's stated profile — occupation, employment status, age — you cannot
-make a terminal decision without senior review. Escalate.
+4. If no scheme criteria are met, reject the applicant with a clear reason.
 
-Respond ONLY with a JSON object. No explanation. No markdown. Just JSON."""
+5. Escalation is reserved for genuine data integrity conflicts discovered
+   through document verification — not for uncertainty or eligibility failures."""
 
 
 def get_agent_action(observation: dict, history: list):
     """
-    Query the LLM with current observation and conversation history.
-    Extracts JSON from the response even if the model adds surrounding text.
-    Falls back to escalate on complete JSON parse failure.
+    Query the LLM with the current observation.
+
+    The user prompt contains only raw observation data:
+    - known_profile: what the agent has gathered so far
+    - missing_data: fields still needed
+    - notification: environment feedback on last action
+    - is_terminated: episode state
+
+    No eligibility hints, no DECISION lines, no field directives.
+    The agent must reason from the observation and scheme rules alone.
+    This is the correct design for an RL training environment —
+    the reward signal teaches, not the prompt.
     """
+    profile      = observation.get('known_profile', {})
+    missing      = observation.get('missing_data', [])
+    notification = observation.get('notification', '')
+    terminated   = observation.get('is_terminated', False)
+
     obs_text = (
-        f"known_profile: {observation.get('known_profile', {})}\n"
-        f"missing_data: {observation.get('missing_data', [])}\n"
-        f"notification: {observation.get('notification', '')}\n"
-        f"is_terminated: {observation.get('is_terminated', False)}\n"
-        f"What is your next action? Respond with JSON only."
+        f"Current application state:\n"
+        f"known_profile: {profile}\n"
+        f"missing_data: {missing}\n"
+        f"notification: {notification}\n"
+        f"is_terminated: {terminated}\n\n"
+        f"Reason through this carefully in <think> tags, then output your next action as JSON."
     )
 
     messages = (
@@ -174,13 +204,24 @@ def get_agent_action(observation: dict, history: list):
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME, messages=messages,
-            max_tokens=150, temperature=0.0,
+            # 500 tokens: allows full <think> reasoning (~300) plus JSON (~30)
+            max_tokens=500, temperature=0.0,
         )
         raw = response.choices[0].message.content.strip()
     except Exception as e:
         return {"action_type": "escalate", "value": ""}, f"API_ERROR: {e}"
 
-    # Extract JSON even if the model wraps it in markdown or prose
+    # Extract and log <think> reasoning block.
+    # Logged separately so reasoning is visible even if JSON extraction
+    # modifies the raw string. This enables future reward shaping on
+    # reasoning quality, not just terminal action correctness.
+    think_match = re.search(r'<think>(.*?)</think>', raw, re.DOTALL)
+    thinking    = think_match.group(1).strip() if think_match else ""
+    if thinking:
+        print(f"  Reasoning: {thinking[:500]}", flush=True)
+
+    # Extract JSON — handles markdown fences, think tags, prose wrapping.
+    # The regex finds the first complete JSON object in the response.
     match = re.search(r'\{.*\}', raw, re.DOTALL)
     if match:
         raw = match.group(0)
@@ -188,11 +229,22 @@ def get_agent_action(observation: dict, history: list):
     try:
         return json.loads(raw), raw
     except json.JSONDecodeError:
-        return {"action_type": "escalate", "value": ""}, raw
+        # Fallback returns ask_question, not escalate.
+        # Escalate fallback gives 0.75 on Task 4 by luck, masking JSON
+        # formatting failures as if they were correct reasoning decisions.
+        return {"action_type": "ask_question", "value": "occupation"}, raw
 
 
 def run_episode(task: int) -> float:
-    """Run one complete episode and return the grader score."""
+    """
+    Run one complete episode for the given task and return the grader score.
+
+    Episode flow:
+    1. Reset environment to get initial observation
+    2. Loop: get agent action → step environment → observe reward
+    3. Continue until episode terminates or MAX_STEPS reached
+    4. Return grader_score from terminal observation
+    """
     task_name = TASK_NAMES[task]
     log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
 
