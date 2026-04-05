@@ -182,8 +182,8 @@ def get_optimal_scheme(profile: dict) -> str | None:
     eligible = get_eligible_schemes(profile)
 
     # Defined priority order — earlier schemes take precedence when multiple qualify
-    priority = ["PMKVY", "MGNREGS", "PMAY", "PM_SYM",
-                "AYUSHMAN_BHARAT", "E_SHRAM", "NFSA", "PMMVY"]
+    priority = ["MGNREGS", "PMAY", "PMKVY", "PM_SYM",
+            "AYUSHMAN_BHARAT", "E_SHRAM", "NFSA", "PMMVY"]
 
     for scheme in priority:
         if scheme in eligible:

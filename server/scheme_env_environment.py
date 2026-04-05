@@ -1,4 +1,5 @@
 import random
+import math
 from uuid import uuid4
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import State
@@ -6,10 +7,14 @@ from openenv.core.env_server.types import State
 from .schemes import SCHEMES
 from models import Action, Observation
 
-# Maximum steps allowed per episode before forced termination
+# =========================================================
+# ENVIRONMENT CONFIGURATION
+# =========================================================
+
+# Maximum steps per episode — generous enough for careful agents but not infinite
 MAX_STEPS = 20
 
-# Fields injected as distractions — querying these wastes a step and costs reward
+# Noise fields injected into every profile — querying them wastes steps and costs reward
 NOISE_FIELDS = [
     "marital_status",
     "state_of_residence",
@@ -17,7 +22,6 @@ NOISE_FIELDS = [
     "bank_name",
 ]
 
-# Possible values for each noise field, randomly selected at episode start
 NOISE_VALUES = {
     "marital_status":     ["married", "unmarried", "widowed", "divorced"],
     "state_of_residence": ["Maharashtra", "Uttar Pradesh", "Bihar", "Rajasthan", "Gujarat"],
@@ -25,147 +29,293 @@ NOISE_VALUES = {
     "bank_name":          ["SBI", "PNB", "Bank of Baroda", "Canara Bank", "UCO Bank"],
 }
 
-# Only these fields are relevant to scheme eligibility — everything else is noise
+# Only these fields are eligibility-relevant — everything else is a trap
 VALID_QUERY_FIELDS = {"age", "income", "occupation", "has_aadhaar"}
 
-# Task 4 contradiction: applicant claims to be a student but PAN shows pension deposits.
-# These are the randomised employer names shown in the PAN verification alert.
+# Task 4: PSU employers used to create the contradiction
 CONTRADICTION_EMPLOYERS = [
     "Indian Railways", "BSNL", "Coal India", "State Bank of India",
     "ONGC", "BHEL", "HAL", "GAIL India",
 ]
 
+# Task 5: the self-reported age that conflicts with the Aadhaar age
+# The Aadhaar age (36) disqualifies from PMKVY (max 35)
+TASK5_AADHAAR_AGE = 36
+TASK5_SELF_REPORTED_AGE = 35
+
+
+# =========================================================
+# NOISE INJECTION
+# =========================================================
 
 def _inject_noise(profile: dict) -> dict:
-    """Inject 1 to 3 irrelevant fields into the profile to test whether the agent ignores distractions."""
+    """
+    Randomly add 1-3 irrelevant fields to the profile.
+    These are traps — querying them costs -1.0 and increments noise_queries.
+    Good agents ignore them entirely.
+    """
     chosen = random.sample(NOISE_FIELDS, k=random.randint(1, 3))
     for field in chosen:
         profile[field] = random.choice(NOISE_VALUES[field])
     return profile
 
 
+# =========================================================
+# PERSONA GENERATION
+# =========================================================
+
 def generate_dynamic_persona(task_id: int) -> dict:
     """
-    Generate a randomised applicant persona for the given task.
-    Values are bounded so the task's intended logic always holds,
-    but no two resets will produce identical profiles.
+    Generate a randomised but deterministically-constrained applicant profile.
+
+    Key design principle: every reset produces a different profile numerically,
+    but the SAME reasoning path is required to solve it. This prevents
+    memorisation while keeping the task logic stable.
     """
+
     if task_id == 1:
-        # Task 1: complete profile that clearly qualifies for PMKVY
+        # ── TASK 1: Scheme Discovery ──────────────────────────────────────────
+        # Profile is complete. Agent must determine the optimal scheme.
+        # HARDENING vs original: when both PMKVY and PMAY are eligible,
+        # PMAY is optimal (higher benefit value: Rs 1.2L vs PMKVY's Rs 8000).
+        # Agents that blindly approve PMKVY without checking PMAY get 0.5.
         age    = random.randint(18, 35)
-        income = random.randint(1000, 9999)   # always under 10000 PMKVY cap
+        income = random.randint(1000, 9999)
         occ    = random.choice(["mason", "carpenter"])
 
-        # PMAY is also eligible when income is low enough and age is in its range
+        # Determine which schemes are genuinely eligible
         eligible = ["PMKVY"]
+        optimal  = "PMKVY"
+
+        # PMAY is also eligible when age is in range and income is below 6000
+        # When PMAY is eligible, it is the OPTIMAL choice (higher benefit)
         if income < 6000 and 21 <= age <= 55:
             eligible.append("PMAY")
+            optimal = "PMAY"   # PMAY > PMKVY in benefit value when both eligible
 
         return {
-            "age": str(age), "income": str(income), "occupation": occ,
-            "has_aadhaar": "True", "optimal_scheme": "PMKVY",
+            "age": str(age),
+            "income": str(income),
+            "occupation": occ,
+            "has_aadhaar": "True",
+            "optimal_scheme": optimal,
             "eligible_schemes": eligible,
         }
 
     elif task_id == 2:
-        # Task 2: qualifies for MGNREGS but occupation and has_aadhaar are hidden
-        age    = random.randint(18, 60)
-        income = random.randint(1000, 5000)
+        # ── TASK 2: Missing Data ──────────────────────────────────────────────
+        # Occupation and Aadhaar status are hidden. Agent must ask for both
+        # before making a terminal decision.
+        # HARDENING vs original: missing_keys order is randomised so agents
+        # cannot hardcode "ask occupation first, then has_aadhaar".
+        missing = random.sample(["occupation", "has_aadhaar"], k=2)
 
         return {
-            "age": str(age), "income": str(income),
-            "occupation": "farm_labourer",  # hidden until agent asks
-            "has_aadhaar": "True",          # hidden until agent asks
+            "age": str(random.randint(18, 60)),
+            "income": str(random.randint(1000, 5000)),
+            "occupation": "farm_labourer",   # hidden until agent asks
+            "has_aadhaar": "True",           # hidden until agent asks
             "optimal_scheme": "MGNREGS",
             "eligible_schemes": ["MGNREGS"],
-            "missing_keys": ["occupation", "has_aadhaar"],
+            "missing_keys": missing,
         }
 
     elif task_id == 3:
-        # Task 3: near-miss — looks PMKVY-eligible but income is strictly above threshold
+        # ── TASK 3: Boundary Fraud Detection ─────────────────────────────────
+        # Income is 1-2000 rupees above the PMKVY threshold.
+        # HARDENING vs original: notification NO LONGER states the income,
+        # the threshold, or what to do. Agent must read known_profile and
+        # recall the PMKVY rule from its own training/system prompt.
         age    = random.randint(22, 34)
-        income = random.randint(10001, 12000)  # always 1-2000 over the 10000 PMKVY cap
+        income = random.randint(10001, 12000)
         occ    = random.choice(["mason", "carpenter"])
 
         return {
-            "age": str(age), "income": str(income), "occupation": occ,
-            "has_aadhaar": "True", "optimal_scheme": None,
-            "eligible_schemes": [], "_near_miss": True,
+            "age": str(age),
+            "income": str(income),
+            "occupation": occ,
+            "has_aadhaar": "True",
+            "optimal_scheme": None,
+            "eligible_schemes": [],
+            "_near_miss": True,
         }
 
     elif task_id == 4:
-        # Task 4: contradictory profile — stated occupation is student but
-        # PAN card reveals active government pension deposits from a formal employer.
-        # The only correct action is escalate — approve or reject are both wrong.
+        # ── TASK 4: Escalation Dilemma ────────────────────────────────────────
+        # Applicant claims to be a student but income/employer data from PAN
+        # reveals formal government employment.
+        # HARDENING vs original:
+        #   - Notification does NOT say "SYSTEM ALERT" or "COMPROMISED"
+        #   - Notification does NOT tell the agent to escalate
+        #   - Agent must notice the student/income mismatch itself,
+        #     proactively request the PAN card, and infer escalation is needed
         age      = random.randint(22, 45)
-        income   = random.randint(2000, 8000)
+        income   = random.randint(8000, 20000)   # suspiciously high for a student
         employer = random.choice(CONTRADICTION_EMPLOYERS)
 
         return {
-            "age": str(age), "income": str(income),
+            "age": str(age),
+            "income": str(income),
             "occupation": "student",
             "has_aadhaar": "True",
             "optimal_scheme": None,
             "eligible_schemes": [],
             "_contradictory": True,
-            "_pan_employer": employer,   # surfaced when agent calls verify_document
+            "_pan_employer": employer,
+        }
+
+    elif task_id == 5:
+        # ── TASK 5: Document Conflict ─────────────────────────────────────────
+        # NEW TASK — hardest in the set.
+        # The applicant self-reports age=35 (PMKVY eligible) but their
+        # Aadhaar card shows age=36 (outside PMKVY range 18-35).
+        # The known_profile shows the SELF-REPORTED age (35) and occupation (mason).
+        # The agent must:
+        #   1. Notice the profile looks PMKVY-eligible on the surface
+        #   2. Request the Aadhaar card for age verification
+        #   3. Discover that the Aadhaar age (36) disqualifies from PMKVY
+        #   4. Check all other schemes — none apply (income too high for PMAY,
+        #      occupation wrong for MGNREGS)
+        #   5. Reject the applicant
+        #
+        # Trap: the noise-injected field "self_reported_age" = "35" will tempt
+        # the agent to use 35 as the age. The authoritative age is from Aadhaar.
+
+        income = random.randint(6001, 9000)   # above PMAY cap, below PMKVY income cap
+                                               # but age disqualifies from PMKVY
+
+        return {
+            "age": str(TASK5_SELF_REPORTED_AGE),   # profile shows self-reported 35
+            "income": str(income),
+            "occupation": "mason",
+            "has_aadhaar": "True",
+            "optimal_scheme": None,
+            "eligible_schemes": [],
+            "_aadhaar_age": str(TASK5_AADHAAR_AGE),   # true age revealed on doc request
+            "_self_reported_age": str(TASK5_SELF_REPORTED_AGE),
+            "_document_conflict": True,
         }
 
     else:
         raise ValueError(f"Unknown task_id: {task_id}")
 
 
+# =========================================================
+# INITIAL OBSERVATION BUILDER
+# =========================================================
+
 def _make_fresh_obs(task: int, persona: dict) -> Observation:
     """
-    Build the initial Observation for the given task.
-    Noise fields are injected here so the agent faces distractions from step one.
+    Build the starting Observation for the given task.
+
+    HARDENING PRINCIPLES applied here:
+    - Task 3: notification gives NO numerical hints — just says "apply rules carefully"
+    - Task 4: notification gives NO SYSTEM ALERT — just flags occupation/income as unusual
+    - Task 5: notification gives NO hint about the age conflict — shows surface profile only
+    All tasks: noise fields injected into profile from step zero.
     """
+
+    # Start with the core eligibility-relevant fields
     profile = {
         "age":    persona["age"],
         "income": persona["income"],
     }
 
-    # Tasks 1, 3, and 4 show the full profile upfront — agent evaluates eligibility directly
-    if task in [1, 3, 4]:
+# EPISODE STRUCTURE DESIGN:
+    # Tasks 4 and 5 reveal occupation upfront because the contradiction/conflict
+    # is built around the occupation value — hiding it would make these tasks
+    # unsolvable in the intended way (agent cannot notice student+high_income
+    # mismatch without seeing occupation, and Task 5 needs mason visible).
+    #
+    # Tasks 1 and 3 deliberately HIDE occupation and has_aadhaar at episode start.
+    # The agent must use ask_question to collect these fields before deciding.
+    # This is the key structural change that creates multi-step episodes:
+    #   - Minimum episode length goes from 1 step to 3 steps
+    #   - Intermediate rewards (+1.0 per valid ask) give RL signal across trajectory
+    #   - Models that blindly approve without gathering data get penalised
+    #   - Discriminates between agents that reason vs agents that pattern-match
+    #
+    # Task 2 already hides occupation and has_aadhaar (existing behaviour unchanged).
+    if task in [4, 5]:
         profile["occupation"]  = persona["occupation"]
         profile["has_aadhaar"] = persona["has_aadhaar"]
+    # Tasks 1 and 3: occupation and has_aadhaar revealed only when agent asks
 
-    # Add random irrelevant fields to test whether the agent ignores distractions
+    # Task 5 special: inject self_reported_age as a fake noise field to tempt the agent
+    if task == 5:
+        profile["self_reported_age"] = persona["_self_reported_age"]
+
+    # Inject random irrelevant fields — same for all tasks
     _inject_noise(profile)
 
+    # ── Task-specific notifications ───────────────────────────────────────────
+    # CRITICAL: notifications must NOT give away the answer.
+    # They set context and difficulty label only.
+
     if task == 1:
-        notif   = (
-            "[TASK 1/4 - SCHEME DISCOVERY - Easy] "
-            "Profile is COMPLETE. Some fields may be irrelevant to eligibility. "
-            "Identify and approve the optimal welfare scheme."
+        # Profile starts with only age and income visible.
+        # Agent must collect occupation and has_aadhaar before approving.
+        # This enforces multi-step reasoning — the agent cannot correctly identify
+        # PMKVY vs PMAY vs MGNREGS without knowing the applicant's occupation.
+        notif = (
+            "[TASK 1/5 - SCHEME DISCOVERY - Easy] "
+            "Profile is INCOMPLETE. Collect all required eligibility fields first, "
+            "then identify and approve the OPTIMAL welfare scheme. "
+            "If multiple schemes apply, choose the one with the highest benefit value."
         )
-        missing = []
+        missing = ["occupation", "has_aadhaar"]
 
     elif task == 2:
-        notif   = (
-            "[TASK 2/4 - MISSING DATA - Medium] "
-            "Profile is INCOMPLETE. You MUST collect ALL missing fields before "
-            "approving any scheme. Note: some profile fields shown are irrelevant."
+        notif = (
+            "[TASK 2/5 - MISSING DATA - Medium] "
+            "Profile is INCOMPLETE. You MUST collect ALL required eligibility fields "
+            "before making any terminal decision. "
+            "Some fields shown are irrelevant — focus only on what schemes require."
         )
         missing = list(persona["missing_keys"])
 
     elif task == 3:
+        # Profile starts with only age and income visible.
+        # Agent must collect occupation and has_aadhaar before it can apply
+        # the full eligibility ruleset. Income is already visible because
+        # the boundary detection requires the agent to reason about the income
+        # value — but it still needs occupation to confirm scheme applicability.
+        # The agent must gather all fields, run integer arithmetic against
+        # all thresholds, and reject when no scheme criteria are fully met.
         notif = (
-            f"[TASK 3/4 - BOUNDARY FRAUD DETECTION - Hard] "
-            f"Profile is COMPLETE. Applicant income is {persona['income']} rupees. "
-            f"PMKVY requires income of 9999 or below. "
-            f"PMAY requires income of 5999 or below. "
-            f"Calculate: is {persona['income']} <= 9999? If NO — reject_applicant. "
-            f"Do not approve any scheme unless the integer comparison passes."
+            "[TASK 3/5 - BOUNDARY FRAUD DETECTION - Hard] "
+            "Profile is INCOMPLETE. Collect all required eligibility fields, "
+            "then apply ALL scheme eligibility rules with exact integer arithmetic. "
+            "Approve only if ALL criteria are fully satisfied. "
+            "If no scheme criteria are fully met, use reject_applicant."
+        )
+        missing = ["occupation", "has_aadhaar"]
+
+    elif task == 4:
+        # NO SYSTEM ALERT, NO income value, NO "COMPROMISED", NO escalation instruction.
+        # The agent must read the full profile independently and notice
+        # that occupation=student is inconsistent with the income level.
+        # It must then request the PAN card and infer escalation is needed.
+        notif = (
+            "[TASK 4/5 - ESCALATION DILEMMA - Expert] "
+            "Profile is COMPLETE. Review all applicant data carefully "
+            "before making any terminal decision. "
+            "If data integrity cannot be confirmed, escalate to a senior officer."
         )
         missing = []
 
-    elif task == 4:
-        notif   = (
-            "[TASK 4/4 - ESCALATION DILEMMA - Expert] "
-            f"Applicant states occupation=student, age={persona['age']}, "
-            f"income={persona['income']}. "
-            "Profile appears complete. Evaluate carefully before deciding."
+    elif task == 5:
+        # CRITICAL DESIGN RULE: The notification must give zero indication that
+        # a document conflict exists. The agent sees a profile that appears
+        # PMKVY-eligible on the surface (age=35, mason, income in range).
+        # It must independently decide to request Aadhaar for age verification,
+        # discover the true age=36, apply eligibility rules, and reject.
+        # Any hint about self-reported data being wrong collapses the task
+        # from "Expert+" to "instruction-following" — which every model passes.
+        notif = (
+            "[TASK 5/5 - DOCUMENT CONFLICT - Expert+] "
+            "Profile is COMPLETE. Apply all eligibility rules and verify "
+            "official documents as required before making a terminal decision."
         )
         missing = []
 
@@ -183,12 +333,20 @@ def _make_fresh_obs(task: int, persona: dict) -> Observation:
         grader_score   = None,
         metadata       = {
             "task":                task,
-            "noise_queries":       0,     # count of noise field queries this episode
-            "redundant_queries":   0,     # count of already-known field re-queries
-            "document_verified":   False, # True once agent calls verify_document in Task 4
+            "noise_queries":       0,      # irrelevant field queries
+            "redundant_queries":   0,      # re-querying known fields
+            "relevant_queries":    0,      # valid eligibility field queries
+            "document_verified":   False,  # True once agent requests Aadhaar/PAN
+            "aadhaar_verified":    False,  # True specifically for Aadhaar in Task 5
+            "pan_verified":        False,  # True specifically for PAN in Task 4
+            "critical_discoveries":0,      # fraud/conflict detections
         },
     )
 
+
+# =========================================================
+# CONTINUOUS GRADER
+# =========================================================
 
 def _compute_grader_score(
     task: int,
@@ -197,53 +355,66 @@ def _compute_grader_score(
     noise_queries: int,
     redundant_queries: int,
     missing_keys_total: int = 0,
+    document_verified: bool = False,
 ) -> float:
     """
-    Convert a binary terminal outcome into a continuous score between 0.0 and 1.0.
+    Convert a terminal outcome into a continuous score between 0.0 and 1.0.
 
-    Penalty sources:
-      noise_queries     — each irrelevant field queried costs 0.08
-      redundant_queries — each re-queried known field costs 0.05
-      wasted steps      — in Task 2, extra steps beyond minimum cost 0.04 each
+    Penalty model:
+      noise_queries      → -0.08 each   (agent got distracted by irrelevant fields)
+      redundant_queries  → -0.05 each   (agent re-asked something it already knew)
+      wasted steps       → -0.04 each   (Task 2: steps beyond minimum required)
 
-    A correct terminal outcome always scores at least 0.30.
-    An incorrect terminal outcome always returns exactly 0.0.
+    Bonus model:
+      document_verified  → +0.05        (Task 4/5: proactive verification rewarded)
+
+    Incorrect terminal outcomes always return 0.0.
+    Correct outcomes are clamped to minimum 0.30 (correct is always better than wrong).
     """
-    # Incorrect outcomes score zero regardless of efficiency
+    # Wrong answers are always zero — no partial credit for bad decisions
     if base_score <= 0.0:
         return 0.0
 
-    # Accumulate penalties from wasteful actions
+    # Accumulate efficiency penalties
     penalty = (noise_queries * 0.08) + (redundant_queries * 0.05)
 
-    # Task 2 adds a step-efficiency penalty beyond the minimum required steps
+    # Task 2: penalise extra steps beyond the theoretical minimum
     if task == 2 and missing_keys_total > 0:
-        min_steps = missing_keys_total + 1   # one ask per missing field plus one approve
+        min_steps = missing_keys_total + 1   # one ask per missing field + one approve
         wasted    = max(0, step_count - min_steps)
         penalty  += wasted * 0.04
 
-    # Clamp so a correct but inefficient agent always outscores a wrong agent
-    return round(max(0.30, base_score - penalty), 3)
+    # Proactive document verification bonus (Tasks 4 and 5)
+    bonus = 0.05 if document_verified else 0.0
 
+    # Final score: correct but inefficient still beats wrong
+    return round(max(0.30, base_score - penalty + bonus), 3)
+
+
+# =========================================================
+# MAIN ENVIRONMENT CLASS
+# =========================================================
 
 class SchemeEnvEnvironment(Environment):
     """
-    OpenEnv-compliant environment simulating an Indian government welfare officer.
-    Supports 4 tasks of increasing difficulty: scheme discovery, missing data
-    collection, boundary fraud detection, and escalation dilemma.
+    OpenEnv-compliant RL environment simulating an Indian CSC welfare officer.
+
+    5 tasks of increasing difficulty:
+      Task 1 — Scheme Discovery:       complete profile, choose optimal scheme
+      Task 2 — Missing Data:           collect hidden fields before deciding
+      Task 3 — Boundary Fraud:         near-miss income, must detect overage
+      Task 4 — Escalation Dilemma:     student/pension contradiction, must escalate
+      Task 5 — Document Conflict:      self-reported vs Aadhaar age mismatch
     """
 
-    # Concurrent sessions are disabled — singleton state cannot support multiple users simultaneously
+    # Singleton: one session at a time — openenv-core creates new instances per request
     SUPPORTS_CONCURRENT_SESSIONS = False
-
-    # Class-level shared state persists across multiple instantiations within the same process.
-    # openenv-core may create new class instances per HTTP request, so state lives here.
     _shared_state = {}
 
     def __init__(self):
         super().__init__()
 
-        # Cold start: initialise shared state with a default Task 1 episode
+        # Cold-start initialisation — only runs once per process lifetime
         if not SchemeEnvEnvironment._shared_state:
             persona = generate_dynamic_persona(1)
             obs     = _make_fresh_obs(1, persona)
@@ -255,7 +426,7 @@ class SchemeEnvEnvironment(Environment):
         self._load_shared()
 
     def _load_shared(self):
-        """Pull the latest episode state from the class-level shared dictionary."""
+        """Restore episode state from class-level dict (survives per-request instantiation)."""
         s             = SchemeEnvEnvironment._shared_state
         self._task    = s["task"]
         self._persona = s["persona"]
@@ -263,7 +434,7 @@ class SchemeEnvEnvironment(Environment):
         self._obs     = s["obs"]
 
     def _save_shared(self):
-        """Push updated episode state back into the class-level shared dictionary."""
+        """Persist episode state back to class-level dict after every step."""
         SchemeEnvEnvironment._shared_state.update({
             "task":    self._task,
             "persona": self._persona,
@@ -273,11 +444,11 @@ class SchemeEnvEnvironment(Environment):
 
     def reset(self, seed=None, **kwargs) -> Observation:
         """
-        Start a new episode. Seed 1-4 selects a specific task.
-        Without a seed, tasks cycle automatically: 1→2→3→4→1.
-        A fresh randomised persona is generated on every call.
+        Start a new episode.
+        seed=1-5 selects a specific task; no seed cycles 1→2→3→4→5→1.
+        Every reset generates a fresh randomised persona.
         """
-        self._task    = seed if seed in (1, 2, 3, 4) else (self._task % 4) + 1
+        self._task    = seed if seed in (1, 2, 3, 4, 5) else (self._task % 5) + 1
         self._persona = generate_dynamic_persona(self._task)
         self._state   = State(episode_id=str(uuid4()), step_count=0)
         self._obs     = _make_fresh_obs(self._task, self._persona)
@@ -286,9 +457,11 @@ class SchemeEnvEnvironment(Environment):
 
     def step(self, action: Action, timeout_s=None, **kwargs) -> Observation:
         """
-        Process one agent action and return the updated observation with reward.
-        All 5 action types are handled with explicit dense reward shaping.
-        Unknown actions return -1.0 and keep the episode alive.
+        Execute one agent action and return the updated observation.
+
+        All 5 action types are handled explicitly.
+        Dense per-step rewards shape behaviour throughout the episode.
+        Terminal actions compute the final grader_score.
         """
         self._state.step_count += 1
         obs          = self._obs
@@ -300,74 +473,114 @@ class SchemeEnvEnvironment(Environment):
             "approve_scheme", "reject_applicant", "escalate",
         }
 
-        # Reject hallucinated or malformed action types without crashing
+        # Reject malformed or hallucinated action types without crashing
         if action.action_type not in valid_actions:
             obs.notification = (
                 f"Unknown action '{action.action_type}'. "
-                f"Valid actions: {', '.join(sorted(valid_actions))}."
+                f"Valid: {', '.join(sorted(valid_actions))}."
             )
             obs.reward = -1.0
             obs.done   = False
             return self._finalize_step(obs)
 
-        # ask_question: reveal a hidden profile field or penalise bad queries
+        # ── ASK_QUESTION ──────────────────────────────────────────────────────
         if action.action_type == "ask_question":
             key = (action.value or "").strip()
 
-            if key in NOISE_FIELDS:
-                # Penalise querying a field that has no bearing on eligibility
+            if key == "self_reported_age":
+                # Task 5 trap: agent asked for the self-reported age instead of requesting Aadhaar
                 obs.metadata["noise_queries"] += 1
-                obs.notification = "Irrelevant field. Focus on scheme eligibility criteria."
+                obs.notification = (
+                    "Self-reported age is already visible in the profile. "
+                    "For authoritative age verification, request the Aadhaar card."
+                )
+                obs.reward = -1.0
+
+            elif key in NOISE_FIELDS:
+                # Penalise querying irrelevant distraction fields
+                obs.metadata["noise_queries"] += 1
+                obs.notification = "Irrelevant field. Focus on eligibility criteria only."
                 obs.reward       = -1.0
 
             elif key in obs.known_profile:
-                # Penalise asking for a field the agent already has
+                # Penalise re-asking a field the agent already has
                 obs.metadata["redundant_queries"] += 1
-                obs.notification = f"'{key}' is already known. Do not ask redundant questions."
+                obs.notification = f"'{key}' is already in the profile. Do not repeat questions."
                 obs.reward       = -1.0
 
             elif key in VALID_QUERY_FIELDS and key in persona:
-                # Valid question — reveal the field and remove it from missing_data
+                # Valid eligibility question — reveal the field
                 val = persona[key]
                 obs.known_profile[key] = val
                 if key in obs.missing_data:
                     obs.missing_data.remove(key)
-                obs.notification = f"Applicant answered: {key} = {val}."
+                obs.metadata["relevant_queries"] += 1
+                obs.notification = f"Applicant confirmed: {key} = {val}."
                 obs.reward       = 1.0
 
             else:
-                obs.notification = f"'{key}' is not a valid eligibility field."
+                obs.notification = f"'{key}' is not a recognised eligibility field."
                 obs.reward       = -1.0
 
-        # request_document: always returns a small positive reward
+        # ── REQUEST_DOCUMENT ──────────────────────────────────────────────────
         elif action.action_type == "request_document":
-            doc = action.value or "document"
+            doc = (action.value or "document").lower()
 
-            # In Task 4, requesting PAN card triggers the contradiction reveal
-            if current_task == 4 and "pan" in doc.lower():
+            if current_task == 4 and "pan" in doc:
+                # Task 4: PAN card reveals the government employment contradiction
                 employer = persona.get("_pan_employer", "a government organisation")
-                obs.metadata["document_verified"] = True
+                obs.metadata["pan_verified"]        = True
+                obs.metadata["document_verified"]   = True
+                obs.metadata["critical_discoveries"] += 1
                 obs.notification = (
-                    f"PAN card verified. ALERT: Records show applicant is a registered "
-                    f"employee of {employer} with active pension deposits. "
-                    f"This contradicts the stated occupation 'student'. "
-                    f"Data integrity is COMPROMISED. You must escalate this case."
+                    f"PAN card retrieved. "
+                    f"Records show this applicant has been a registered employee of "
+                    f"{employer} for the past 6 years with active pension contributions. "
+                    f"This directly contradicts the stated occupation 'student'. "
+                    f"The case cannot be approved or rejected without senior review."
                 )
-                obs.reward = 1.5   # higher reward for proactive verification in Task 4
+                obs.reward = 2.0   # strong reward for proactive contradiction discovery
+
+            elif current_task == 5 and "aadhaar" in doc:
+                # Task 5: Aadhaar reveals the true age is 36, not 35
+                true_age = persona.get("_aadhaar_age", str(TASK5_AADHAAR_AGE))
+                obs.metadata["aadhaar_verified"]     = True
+                obs.metadata["document_verified"]    = True
+                obs.metadata["critical_discoveries"] += 1
+                # Update known_profile with the authoritative Aadhaar age
+                obs.known_profile["age"]             = true_age
+                obs.notification = (
+                    f"Aadhaar card verified. "
+                    f"Official age on record: {true_age} years. "
+                    f"Note: this differs from the self-reported age of "
+                    f"{persona.get('_self_reported_age', '35')} in the profile. "
+                    f"The Aadhaar age is the authoritative value for eligibility decisions."
+                )
+                obs.reward = 2.0   # strong reward for discovering the conflict
+
+            elif current_task == 5 and "pan" in doc:
+                # Task 5: PAN doesn't reveal the age conflict — mild reward for trying
+                obs.notification = (
+                    "PAN card verified. No anomalies found in tax records. "
+                    "For age verification, the Aadhaar card is the authoritative document."
+                )
+                obs.reward = 0.5
+
             else:
-                obs.notification = f"Document '{doc}' received and verified."
+                # Generic document request — small positive reward
+                obs.notification = f"Document '{action.value or 'document'}' received and verified."
                 obs.reward       = 0.5
 
-        # approve_scheme: terminal action — validate against task-specific constraints
+        # ── APPROVE_SCHEME ────────────────────────────────────────────────────
         elif action.action_type == "approve_scheme":
             scheme = (action.value or "").strip()
 
+            # Task 4: any approval while contradiction is unresolved is fraud authorisation
             if current_task == 4:
-                # Any approval in Task 4 is fraud authorisation — data is compromised
                 score = 0.0
                 obs.notification = (
-                    "FRAUD AUTHORIZATION VIOLATION: This case has contradictory data. "
-                    "You cannot approve any scheme while data integrity is compromised. "
+                    "FRAUD AUTHORIZATION VIOLATION: This case has a data integrity conflict. "
+                    "You cannot approve any scheme without resolving the contradiction first. "
                     "The correct action is to escalate to a senior officer."
                 )
                 obs.reward        = -5.0
@@ -377,27 +590,85 @@ class SchemeEnvEnvironment(Environment):
                 obs.metadata["grader_score"] = score
                 return self._finalize_step(obs)
 
+            # Task 5: approval before Aadhaar verification is a protocol violation
+            if current_task == 5 and not obs.metadata.get("aadhaar_verified", False):
+                score = 0.0
+                obs.notification = (
+                    "PROTOCOL VIOLATION: You must verify the Aadhaar card before approving "
+                    "any scheme when age is a critical eligibility factor. "
+                    "Request the Aadhaar card first."
+                )
+                obs.reward        = -3.0
+                obs.done          = True
+                obs.is_terminated = True
+                obs.grader_score  = score
+                obs.metadata["grader_score"] = score
+                return self._finalize_step(obs)
+
+            # Task 5 after Aadhaar verification: age is now 36, PMKVY is impossible
+            if current_task == 5 and obs.metadata.get("aadhaar_verified", False):
+                score = 0.0
+                obs.notification = (
+                    f"ELIGIBILITY VIOLATION: Aadhaar confirms age={TASK5_AADHAAR_AGE}. "
+                    f"PMKVY requires age ≤ 35. No other scheme applies to this profile. "
+                    f"The correct action is reject_applicant."
+                )
+                obs.reward        = -5.0
+                obs.done          = True
+                obs.is_terminated = True
+                obs.grader_score  = score
+                obs.metadata["grader_score"] = score
+                return self._finalize_step(obs)
+
+            # Task 3: any approval is always wrong — income exceeds all thresholds.
+            # CRITICAL RL DESIGN: We do NOT give a flat -5.0 for all wrong approvals.
+            # Instead, we use a gradient penalty based on how far income exceeds
+            # the PMKVY threshold (9999). This gives the RL training signal
+            # direction — an agent that was off by Rs 1 learns something different
+            # from an agent that was off by Rs 5000. Without this gradient,
+            # no RL algorithm can learn the boundary through experience.
+            #
+            # Penalty tiers (overage = income - 9999):
+            #   overage <= 100   → -1.0  (boundary case, agent nearly correct)
+            #   overage <= 500   → -2.5  (close miss, partial signal)
+            #   overage <= 2000  → -4.0  (clear miss)
+            #   overage >  2000  → -5.0  (completely wrong, maximum penalty)
             if current_task == 3:
-                # Task 3 has no eligible scheme — any approval is a boundary violation
+                income_int = int(persona["income"])
+                overage    = income_int - 9999  # PMKVY income threshold is 9999
+
+                if overage <= 100:
+                    step_reward = -1.0
+                    tier_label  = "BOUNDARY MISS"
+                elif overage <= 500:
+                    step_reward = -2.5
+                    tier_label  = "CLOSE MISS"
+                elif overage <= 2000:
+                    step_reward = -4.0
+                    tier_label  = "CLEAR MISS"
+                else:
+                    step_reward = -5.0
+                    tier_label  = "THRESHOLD VIOLATION"
+
                 score = 0.0
                 obs.notification = (
-                    f"BOUNDARY VIOLATION: Applicant income is {int(persona['income'])} "
-                    f"which exceeds the PMKVY threshold of 10,000. "
-                    f"Use reject_applicant instead."
+                    f"{tier_label}: Income {persona['income']} exceeds all scheme "
+                    f"thresholds (overage: Rs {overage} above PMKVY limit). "
+                    f"Use reject_applicant when no scheme criteria are fully met."
                 )
-                obs.reward        = -5.0
+                obs.reward        = step_reward
                 obs.done          = True
                 obs.is_terminated = True
                 obs.grader_score  = score
                 obs.metadata["grader_score"] = score
                 return self._finalize_step(obs)
 
+            # Task 2: cannot approve while missing_data is not empty
             if current_task == 2 and len(obs.missing_data) > 0:
-                # Agent tried to approve before collecting all required fields
                 score = 0.0
                 obs.notification = (
-                    f"PREMATURE APPROVAL VIOLATION: Still missing: {obs.missing_data}. "
-                    "Collect all required fields before approving."
+                    f"PREMATURE APPROVAL: Still missing required fields: {obs.missing_data}. "
+                    "Collect all required data before approving."
                 )
                 obs.reward        = -5.0
                 obs.done          = True
@@ -406,11 +677,12 @@ class SchemeEnvEnvironment(Environment):
                 obs.metadata["grader_score"] = score
                 return self._finalize_step(obs)
 
-            # Tasks 1 and 2: grade the scheme choice
+            # Tasks 1 and 2: grade the scheme choice against optimal and eligible
             optimal  = persona["optimal_scheme"]
             eligible = persona["eligible_schemes"]
 
             if scheme == optimal:
+                # Perfect choice — compute efficiency-adjusted grader score
                 score = _compute_grader_score(
                     task               = current_task,
                     base_score         = 1.0,
@@ -418,8 +690,9 @@ class SchemeEnvEnvironment(Environment):
                     noise_queries      = obs.metadata.get("noise_queries", 0),
                     redundant_queries  = obs.metadata.get("redundant_queries", 0),
                     missing_keys_total = len(persona.get("missing_keys", [])),
+                    document_verified  = obs.metadata.get("document_verified", False),
                 )
-                obs.notification  = f"SUCCESS: Applicant correctly enrolled in {scheme}."
+                obs.notification  = f"CORRECT: Applicant enrolled in {scheme} — optimal scheme."
                 obs.reward        = 10.0
                 obs.done          = True
                 obs.is_terminated = True
@@ -427,7 +700,7 @@ class SchemeEnvEnvironment(Environment):
                 obs.metadata["grader_score"] = score
 
             elif scheme in eligible:
-                # Correct scheme family but not the most optimal choice
+                # Eligible but not optimal — partial credit
                 score = _compute_grader_score(
                     task              = current_task,
                     base_score        = 0.5,
@@ -435,7 +708,7 @@ class SchemeEnvEnvironment(Environment):
                     noise_queries     = obs.metadata.get("noise_queries", 0),
                     redundant_queries = obs.metadata.get("redundant_queries", 0),
                 )
-                obs.notification  = f"Enrolled in {scheme}, but {optimal} was more optimal."
+                obs.notification  = f"SUBOPTIMAL: {scheme} is eligible but {optimal} provides greater benefit."
                 obs.reward        = 3.0
                 obs.done          = True
                 obs.is_terminated = True
@@ -443,25 +716,24 @@ class SchemeEnvEnvironment(Environment):
                 obs.metadata["grader_score"] = score
 
             else:
-                # Scheme the applicant does not qualify for
+                # Scheme the applicant doesn't qualify for at all
                 score = 0.0
-                obs.notification  = f"ERROR: Applicant is NOT eligible for '{scheme}'."
+                obs.notification  = f"ERROR: Applicant does not qualify for '{scheme}'."
                 obs.reward        = -5.0
                 obs.done          = True
                 obs.is_terminated = True
                 obs.grader_score  = score
                 obs.metadata["grader_score"] = score
 
-        # reject_applicant: terminal action — only correct in Task 3
+        # ── REJECT_APPLICANT ──────────────────────────────────────────────────
         elif action.action_type == "reject_applicant":
 
             if current_task == 4:
-                # Rejecting without escalating ignores the data integrity conflict
+                # Cannot reject without resolving the data integrity conflict
                 score = 0.0
                 obs.notification = (
-                    "PREMATURE ADJUDICATION: You cannot reject this applicant without "
-                    "resolving the data integrity conflict. "
-                    "The PAN card anomaly must be reviewed by a senior officer. Use escalate."
+                    "PREMATURE ADJUDICATION: The data integrity conflict must be resolved "
+                    "by a senior officer before any terminal decision. Use escalate."
                 )
                 obs.reward        = -3.0
                 obs.done          = True
@@ -469,8 +741,43 @@ class SchemeEnvEnvironment(Environment):
                 obs.grader_score  = score
                 obs.metadata["grader_score"] = score
 
+            elif current_task == 5:
+                if not obs.metadata.get("aadhaar_verified", False):
+                    # Rejected without verifying Aadhaar — might be rejecting an eligible person
+                    score = 0.0
+                    obs.notification = (
+                        "PROTOCOL VIOLATION: You must verify the Aadhaar card before "
+                        "rejecting an applicant when age is a critical factor. "
+                        "Request the Aadhaar card first."
+                    )
+                    obs.reward        = -3.0
+                    obs.done          = True
+                    obs.is_terminated = True
+                    obs.grader_score  = score
+                    obs.metadata["grader_score"] = score
+                else:
+                    # Correct: Aadhaar verified (age=36), correctly rejected
+                    score = _compute_grader_score(
+                        task             = current_task,
+                        base_score       = 1.0,
+                        step_count       = self._state.step_count,
+                        noise_queries    = obs.metadata.get("noise_queries", 0),
+                        redundant_queries= obs.metadata.get("redundant_queries", 0),
+                        document_verified= True,
+                    )
+                    obs.notification  = (
+                        f"CORRECT REJECTION: Aadhaar confirms age={TASK5_AADHAAR_AGE}, "
+                        f"which exceeds the PMKVY maximum of 35. "
+                        f"No other scheme criteria are satisfied. Rejection is valid."
+                    )
+                    obs.reward        = 5.0
+                    obs.done          = True
+                    obs.is_terminated = True
+                    obs.grader_score  = score
+                    obs.metadata["grader_score"] = score
+
             elif current_task == 3:
-                # Task 3: correct rejection of the near-miss applicant
+                # Correct: income is above all thresholds, rejection is right
                 score = _compute_grader_score(
                     task              = current_task,
                     base_score        = 1.0,
@@ -479,8 +786,8 @@ class SchemeEnvEnvironment(Environment):
                     redundant_queries = obs.metadata.get("redundant_queries", 0),
                 )
                 obs.notification  = (
-                    f"CORRECT REJECTION: Applicant income {persona['income']} "
-                    f"exceeds the PMKVY threshold of 10,000. No eligible scheme found."
+                    f"CORRECT REJECTION: Income {persona['income']} exceeds all scheme "
+                    f"thresholds. No eligible scheme found."
                 )
                 obs.reward        = 5.0
                 obs.done          = True
@@ -489,11 +796,11 @@ class SchemeEnvEnvironment(Environment):
                 obs.metadata["grader_score"] = score
 
             else:
-                # Tasks 1 and 2: applicant is eligible — rejection is wrong
+                # Tasks 1 and 2: applicant is eligible — rejecting is wrong
                 score = 0.0
                 obs.notification  = (
-                    "ERROR: This applicant IS eligible for welfare schemes. "
-                    "Rejection is not valid here."
+                    "ERROR: This applicant qualifies for a welfare scheme. "
+                    "Review the eligibility criteria and approve the correct scheme."
                 )
                 obs.reward        = -5.0
                 obs.done          = True
@@ -501,25 +808,26 @@ class SchemeEnvEnvironment(Environment):
                 obs.grader_score  = score
                 obs.metadata["grader_score"] = score
 
-        # escalate: only rewarded in Task 4 — penalised everywhere else
+        # ── ESCALATE ──────────────────────────────────────────────────────────
         elif action.action_type == "escalate":
 
             if current_task == 4:
-                # Task 4: escalation is the only safe and correct terminal action.
-                # Bonus score if agent verified the document before escalating.
-                verified = obs.metadata.get("document_verified", False)
-                base     = 1.0 if verified else 0.85   # slight bonus for proactive verification
+                # Escalation is the only correct terminal action in Task 4
+                # Bonus grader score if agent verified PAN before escalating
+                verified = obs.metadata.get("pan_verified", False)
+                base     = 1.0 if verified else 0.75   # meaningful penalty for not verifying
                 score    = _compute_grader_score(
                     task              = current_task,
                     base_score        = base,
                     step_count        = self._state.step_count,
                     noise_queries     = obs.metadata.get("noise_queries", 0),
                     redundant_queries = obs.metadata.get("redundant_queries", 0),
+                    document_verified = verified,
                 )
                 obs.notification  = (
-                    "CORRECT ESCALATION: Data integrity conflict detected and properly "
-                    "handed off to a senior officer for manual verification. "
-                    "This is the required protocol when applicant data is contradictory."
+                    "CORRECT ESCALATION: Contradictory data detected and properly handed "
+                    "off to a senior officer for manual verification. "
+                    "This is the required protocol for data integrity conflicts."
                 )
                 obs.reward        = 10.0
                 obs.done          = True
@@ -528,11 +836,12 @@ class SchemeEnvEnvironment(Environment):
                 obs.metadata["grader_score"] = score
 
             else:
-                # Tasks 1-3: escalation is a penalty — there is enough data to decide
+                # Escalation in Tasks 1, 2, 3, 5 is wrong — there is enough data to decide
                 score = 0.0
                 obs.notification  = (
-                    "Case escalated to senior officer. Episode ends. "
-                    "Escalation should only be used when data integrity is compromised."
+                    "INCORRECT ESCALATION: Escalation is only appropriate when data "
+                    "integrity is genuinely compromised. This case has sufficient "
+                    "information for a direct decision."
                 )
                 obs.reward        = -2.0
                 obs.done          = True
@@ -544,24 +853,22 @@ class SchemeEnvEnvironment(Environment):
 
     def _finalize_step(self, obs: Observation) -> Observation:
         """
-        Called at the end of every step.
-        Enforces the step limit and syncs state back to the shared class dictionary.
+        Enforce step limit and persist state.
+        Called at the end of every step regardless of outcome.
         """
         if self._state.step_count >= MAX_STEPS and not obs.done:
-            # Force termination if the agent has used all allowed steps
             obs.is_terminated            = True
-            obs.notification             = f"TIMEOUT: {MAX_STEPS} steps reached. Case closed."
+            obs.notification             = f"TIMEOUT: {MAX_STEPS} steps reached without a decision."
             obs.reward                   = -2.0
             obs.done                     = True
             obs.grader_score             = 0.0
             obs.metadata["grader_score"] = 0.0
 
-        # Persist updated state so the next HTTP request sees it
         self._obs = obs
         self._save_shared()
         return obs
 
     @property
     def state(self) -> State:
-        """Return the current episode state including episode_id and step_count."""
+        """Return current episode state for openenv-core."""
         return self._state

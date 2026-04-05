@@ -23,12 +23,13 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import FancyBboxPatch
 
-TASK_NUMBERS = [1, 2, 3, 4]
+TASK_NUMBERS = [1, 2, 3, 4, 5]
 TASK_NAMES = {
     1: "T1: Scheme Discovery",
     2: "T2: Missing Data",
     3: "T3: Boundary Fraud Detection",
     4: "T4: Escalation Dilemma",
+    5: "T5: Document Conflict",
 }
 
 THEME = {
@@ -266,7 +267,7 @@ def parse_actions(task_body: str) -> list[ParsedAction]:
 def parse_tasks(log_text: str) -> list[ParsedTask]:
     matches = list(
         re.finditer(
-            r"TASK\s+([1-4])/[0-9]+(.*?)(?=\n={20,}\n\s+TASK\s+[1-4]/[0-9]+|\n={20,}\n\s+FINAL|\Z)",
+            r"TASK\s+([1-5])/[0-9]+(.*?)(?=\n={20,}\n\s+TASK\s+[1-5]/[0-9]+|\n={20,}\n\s+FINAL|\Z)",
             log_text,
             re.DOTALL,
         )
@@ -400,7 +401,7 @@ def parse_model_log(log_path: Path, csv_row: Optional[dict[str, str]]) -> tuple[
 
 def active_task_numbers(models: list[ParsedModelRun]) -> list[int]:
     numbers = sorted({task.task_number for model in models for task in model.tasks})
-    return numbers or [1, 2, 3]
+    return numbers or [1, 2, 3, 4, 5]
 
 
 def reconcile_bundle(timestamp: str, csv_path: Optional[Path], logs_dir: Path) -> ReportBundle:
@@ -724,6 +725,8 @@ def write_summary_csv(bundle: ReportBundle, output_dir: Path) -> Path:
                 "task_1_score",
                 "task_2_score",
                 "task_3_score",
+                "task_4_score",
+                "task_5_score",
                 "total_steps",
                 "negative_reward_steps",
                 "error_type",
@@ -740,6 +743,8 @@ def write_summary_csv(bundle: ReportBundle, output_dir: Path) -> Path:
                     f"{scores.get(1, 0.0):.4f}",
                     f"{scores.get(2, 0.0):.4f}",
                     f"{scores.get(3, 0.0):.4f}",
+                    f"{scores.get(4, 0.0):.4f}",
+                    f"{scores.get(5, 0.0):.4f}",
                     model.total_steps,
                     model.total_negative_reward_steps,
                     model.error_type or "",

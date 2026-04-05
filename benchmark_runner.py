@@ -25,9 +25,9 @@ LOG_DIR = RUN_DIR / f"logs_{TIMESTAMP}"
 MANIFEST_FILE = RUN_DIR / f"run_manifest_{TIMESTAMP}.json"
 
 def extract_scores(output_text: str) -> dict:
-    scores = {"Task 1": 0.0, "Task 2": 0.0, "Task 3": 0.0, "Task 4": 0.0, "Average": 0.0}
+    scores = {"Task 1": 0.0, "Task 2": 0.0, "Task 3": 0.0, "Task 4": 0.0, "Task 5": 0.0, "Average": 0.0}
     task_matches = re.findall(
-        r"TASK\s+([1-4])/[0-9]+.*?GRADER SCORE:\s*([0-9.]+)\s*/\s*1\.0",
+        r"TASK\s+([1-5])/[0-9]+.*?GRADER SCORE:\s*([0-9.]+)\s*/\s*1\.0",
         output_text,
         re.DOTALL,
     )
@@ -35,7 +35,7 @@ def extract_scores(output_text: str) -> dict:
         scores[f"Task {task_number}"] = float(value)
 
     final_task_matches = re.findall(
-        r"Task\s+([1-4]).*?:\s*([0-9.]+)\s*/\s*1\.0",
+        r"Task\s+([1-5])[^:]*:\s*([0-9.]+)\s*/\s*1\.0",
         output_text,
     )
     for task_number, value in final_task_matches:
@@ -46,8 +46,8 @@ def extract_scores(output_text: str) -> dict:
         scores["Average"] = float(avg_match.group(1))
     elif task_matches or final_task_matches:
         scores["Average"] = round(
-            sum(scores[f"Task {index}"] for index in range(1, 5)) / 4,
-            4,
+            sum(scores[f"Task {index}"] for index in range(1, 6)) / 5,
+            4
         )
     return scores
 
@@ -66,20 +66,20 @@ async def run_model(model: str, queue: asyncio.Queue, idx: int, total: int):
 
         if proc.returncode == 0:
             s = extract_scores(stdout)
-            await queue.put({"model": model, "status": "Completed", "t1": s["Task 1"], "t2": s["Task 2"], "t3": s["Task 3"], "t4": s["Task 4"], "avg": s["Average"]})
+            await queue.put({"model": model, "status": "Completed", "t1": s["Task 1"], "t2": s["Task 2"], "t3": s["Task 3"], "t4": s["Task 4"], "t5": s["Task 5"], "avg": s["Average"]})
         else:
-            await queue.put({"model": model, "status": "Error", "t1": 0, "t2": 0, "t3": 0, "t4": 0, "avg": 0})
+            await queue.put({"model": model, "status": "Error", "t1": 0, "t2": 0, "t3": 0, "t4": 0, "t5": 0, "avg": 0})
     except asyncio.TimeoutError:
         proc.kill()
-        await queue.put({"model": model, "status": "Timeout", "t1": 0, "t2": 0, "t3": 0, "t4": 0, "avg": 0})
+        await queue.put({"model": model, "status": "Timeout", "t1": 0, "t2": 0, "t3": 0, "t4": 0, "t5": 0, "avg": 0})
 
 async def csv_writer(queue: asyncio.Queue, total: int):
     with open(RESULTS_FILE, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["Model", "Status", "Task 1", "Task 2", "Task 3", "Task 4", "Average Score"])
+        writer.writerow(["Model", "Status", "Task 1", "Task 2", "Task 3", "Task 4", "Task 5", "Average Score"])
         for _ in range(total):
             r = await queue.get()
-            writer.writerow([r["model"], r["status"], r["t1"], r["t2"], r["t3"], r["t4"], r["avg"]])
+            writer.writerow([r["model"], r["status"], r["t1"], r["t2"], r["t3"], r["t4"], r["t5"], r["avg"]])
 
 def write_manifest():
     manifest = {
