@@ -287,16 +287,13 @@ def _make_fresh_obs(task: int, persona: dict) -> Observation:
         done           = False,
         grader_score   = None,
         metadata = {
-            "task_label":          f"task_{task}",
-            "noise_queries":       0,
-            "redundant_queries":   0,
-            "relevant_queries":    0,
-            "document_verified":   False,
-            "aadhaar_verified":    False,
-            "pan_verified":        False,
-            "critical_discoveries": 0,
+         "task_label":        f"task_{task}",
+         "noise_queries":     0,
+         "redundant_queries": 0,
+         "relevant_queries":  0,
+        # pan_verified, aadhaar_verified, document_verified REMOVED
+        # these are maintained internally but NOT sent to agent
         },
-
     )   
 
 
@@ -746,7 +743,7 @@ class SchemeEnvEnvironment(Environment):
 
             if current_task == 4:
                 verified = obs.metadata.get("pan_verified", False)
-                base     = 1.0 if verified else 0.25
+                obs.reward = 10.0 if verified else 2.5
                 score    = _compute_grader_score(
                     task              = current_task,
                     base_score        = base,
@@ -760,24 +757,21 @@ class SchemeEnvEnvironment(Environment):
                     "off to a senior officer for manual verification. "
                     "This is the required protocol for data integrity conflicts."
                 )
-                obs.reward        = 10.0
                 obs.done          = True
                 obs.is_terminated = True
                 obs.grader_score  = score
                 obs.metadata["grader_score"] = score
 
             else:
-                score = 0.0
-                obs.notification  = (
+                obs.notification = (
                     "INCORRECT ESCALATION: Escalation is only appropriate when data "
                     "integrity is genuinely compromised. This case has sufficient "
-                    "information for a direct decision."
+                    "information for a direct decision. Please reconsider."
                 )
                 obs.reward        = -2.0
-                obs.done          = True
-                obs.is_terminated = True
-                obs.grader_score  = score
-                obs.metadata["grader_score"] = score
+                obs.done          = False
+                obs.is_terminated = False
+                # grader_score stays None — episode continues
 
         return self._finalize_step(obs)
 

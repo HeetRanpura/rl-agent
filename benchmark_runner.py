@@ -34,39 +34,25 @@ TIMEOUT_SECONDS = 600
 
 # ── 12 models across capability tiers ────────────────────────────────────────
 MODELS_TO_TEST = [
-    # Tier 1 — Small
-    "microsoft/Phi-3-mini-4k-instruct",
-    "Qwen/Qwen2.5-3B-Instruct",
-    # Tier 2 — Medium-small  
     "Qwen/Qwen2.5-7B-Instruct",
     "meta-llama/Llama-3.1-8B-Instruct",
-    # Tier 3 — Medium
-    "Qwen/Qwen2.5-14B-Instruct",
-    "microsoft/Phi-4",
-    # Tier 4 — Medium-large
-    "Qwen/Qwen2.5-32B-Instruct",
     "Qwen/QwQ-32B",
-    # Tier 5 — Large
     "meta-llama/Llama-3.3-70B-Instruct",
     "Qwen/Qwen2.5-72B-Instruct",
-    # Tier 6 — Frontier
-    "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
-    "mistralai/Mistral-Large-Instruct-2411",
+    "google/gemma-4-31B-it",
+    "prism-ml/Bonsai-8B-mlx-1bit",
+    'sentence-transformers/all-mpnet-base-v2'
 ]
 
 MODEL_TIERS = {
-    "microsoft/Phi-3-mini-4k-instruct":           "1-small",
-    "Qwen/Qwen2.5-3B-Instruct":                  "1-small",
-    "Qwen/Qwen2.5-7B-Instruct":                  "2-medium-small",
-    "meta-llama/Llama-3.1-8B-Instruct":          "2-medium-small",
-    "Qwen/Qwen2.5-14B-Instruct":                 "3-medium",
-    "microsoft/Phi-4":                            "3-medium",
-    "Qwen/Qwen2.5-32B-Instruct":                 "4-medium-large",
-    "Qwen/QwQ-32B":                               "4-medium-large",
-    "meta-llama/Llama-3.3-70B-Instruct":         "5-large",
-    "Qwen/Qwen2.5-72B-Instruct":                 "5-large",
-    "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B":  "6-frontier",
-    "mistralai/Mistral-Large-Instruct-2411":      "6-frontier",
+    "Qwen/Qwen2.5-7B-Instruct":                  "1-small",
+    "meta-llama/Llama-3.1-8B-Instruct":          "1-small",
+    "Qwen/QwQ-32B":                               "2-medium",
+    "meta-llama/Llama-3.3-70B-Instruct":         "3-large",
+    "Qwen/Qwen2.5-72B-Instruct":                 "3-large",
+    "google/gemma-4-31B-it":                     "4-xlarge",
+    "prism-ml/Bonsai-8B-mlx-1bit":               "4-xlarge",
+    'sentence-transformers/all-mpnet-base-v2':   "4-xlarge",
 }
 
 TASK_NAMES = {

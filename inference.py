@@ -191,7 +191,13 @@ def get_agent_action(observation: dict, history: list):
     # FIX D9: use last match to avoid extracting JSON from inside <think> blocks.
     # re.findall returns all non-nested {...} objects; we take the last one,
     # which is always the action JSON that follows </think>.
-    matches = re.findall(r'\{[^{}]*\}', raw)
+    # FIX D9 v2: handle long <think> blocks from QwQ/DeepSeek-R1.
+    # First extract content after </think>, then find last action JSON.
+    after_think = raw.split("</think>")[-1] if "</think>" in raw else raw
+    matches = re.findall(r'\{[^{}]*"action_type"[^{}]*\}', after_think)
+    if not matches:
+        # Fallback: search full raw output
+        matches = re.findall(r'\{[^{}]*"action_type"[^{}]*\}', raw)
     if matches:
         raw = matches[-1]
 
