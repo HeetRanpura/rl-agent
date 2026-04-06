@@ -69,7 +69,7 @@ def log_end(success: bool, steps: int, score: float, rewards: list) -> None:
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(
         f"[END] success={str(success).lower()} steps={steps} "
-        f"rewards={rewards_str}",
+        f"score={score:.3f} rewards={rewards_str}",
         flush=True,
     )
 
@@ -103,11 +103,14 @@ Never output JSON without the <think> block. Never skip reasoning.
   Enroll the applicant in a welfare scheme.
   Valid scheme names: PMKVY, MGNREGS, PMAY
 
-{"action_type": "reject_applicant", "value": "<reason>"}
-  Reject the application with a clear reason.
+{"action_type": "reject_applicant", "value": "<category>"}
+  Reject the application using one concise category.
+  Valid categories: AGE_EXCEEDED, INCOME_TOO_HIGH, NO_ELIGIBLE_SCHEME,
+  MISSING_REQUIRED_DATA, DATA_MISMATCH, DOCUMENT_CONFLICT
 
-{"action_type": "escalate", "value": ""}
+{"action_type": "escalate", "value": "<category_or_empty>"}
   Hand off to a senior officer for manual review.
+  Use MANUAL_REVIEW_REQUIRED or DATA_MISMATCH when escalating.
 
 === SCHEME ELIGIBILITY RULES ===
 All conditions must be simultaneously true. Use strict integer arithmetic.

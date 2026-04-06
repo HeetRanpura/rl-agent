@@ -16,6 +16,11 @@ from models import Action, Observation
 # Maximum steps per episode — generous enough for careful agents but not infinite
 MAX_STEPS = 20
 
+# Keep non-terminal shaping small so agents optimize for correct terminal
+# outcomes instead of reward-farming with unnecessary information gathering.
+VALID_STEP_PENALTY = -0.05
+INVALID_STEP_PENALTY = -0.10
+
 # Noise fields injected into every profile — querying them wastes steps and costs reward
 NOISE_FIELDS = [
     "marital_status",
@@ -67,12 +72,10 @@ def _inject_noise(profile: dict) -> dict:
 
 def generate_dynamic_persona(task_id: int) -> dict:
     """
-    Generate a randomised but deterministically-constrained applicant profile.
-    Key design principle: every reset produces a different profile numerically,
-    but the SAME reasoning path is required to solve it. This prevents
-    memorisation while keeping the task logic stable.
+    Generate a randomized applicant profile for the chosen task template.
+    Each reset keeps the same reasoning pattern but refreshes the applicant
+    details so agents must read state rather than memorize fixed trajectories.
     """
-    random.seed(task_id * 1000)  # deterministic persona per task
 
     if task_id == 1:
         # ── TASK 1: Scheme Discovery ──────────────────────────────────────────
@@ -424,7 +427,7 @@ class SchemeEnvEnvironment(Environment):
                 f"Unknown action '{action.action_type}'. "
                 f"Valid: {', '.join(sorted(valid_actions))}."
             )
-            obs.reward = -1.0
+            obs.reward = INVALID_STEP_PENALTY
             obs.done   = False
             return self._finalize_step(obs)
 
@@ -438,17 +441,17 @@ class SchemeEnvEnvironment(Environment):
                     "Self-reported age is already visible in the profile. "
                     "For authoritative age verification, request the Aadhaar card."
                 )
-                obs.reward = -1.0
+                obs.reward = INVALID_STEP_PENALTY
 
             elif key in NOISE_FIELDS:
                 obs.metadata["noise_queries"] += 1
                 obs.notification = "Irrelevant field. Focus on eligibility criteria only."
-                obs.reward       = -1.0
+                obs.reward       = INVALID_STEP_PENALTY
 
             elif key in obs.known_profile:
                 obs.metadata["redundant_queries"] += 1
                 obs.notification = f"'{key}' is already in the profile. Do not repeat questions."
-                obs.reward       = -1.0
+                obs.reward       = INVALID_STEP_PENALTY
 
             elif key in VALID_QUERY_FIELDS and key in persona:
                 val = persona[key]
@@ -457,11 +460,11 @@ class SchemeEnvEnvironment(Environment):
                     obs.missing_data.remove(key)
                 obs.metadata["relevant_queries"] += 1
                 obs.notification = f"Applicant confirmed: {key} = {val}."
-                obs.reward       = 1.0
+                obs.reward       = VALID_STEP_PENALTY
 
             else:
                 obs.notification = f"'{key}' is not a recognised eligibility field."
-                obs.reward       = -1.0
+                obs.reward       = INVALID_STEP_PENALTY
 
         # ── REQUEST_DOCUMENT ──────────────────────────────────────────────────
         elif action.action_type == "request_document":
@@ -479,7 +482,7 @@ class SchemeEnvEnvironment(Environment):
                     f"This directly contradicts the stated occupation 'student'. "
                     f"The case cannot be approved or rejected without senior review."
                 )
-                obs.reward = 2.0
+                obs.reward = VALID_STEP_PENALTY
 
             elif current_task == 5 and "aadhaar" in doc:
                 true_age = persona.get("_aadhaar_age", "36")
@@ -494,14 +497,14 @@ class SchemeEnvEnvironment(Environment):
                     f"{persona.get('_self_reported_age', '35')} in the profile. "
                     f"The Aadhaar age is the authoritative value for eligibility decisions."
                 )
-                obs.reward = 2.0
+                obs.reward = VALID_STEP_PENALTY
 
             elif current_task == 5 and "pan" in doc:
                 obs.notification = (
                     "PAN card verified. No anomalies found in tax records. "
                     "For age verification, the Aadhaar card is the authoritative document."
                 )
-                obs.reward = 0.5
+                obs.reward = VALID_STEP_PENALTY
 
             else:
                 doc_lower = (action.value or "").lower()
@@ -511,7 +514,7 @@ class SchemeEnvEnvironment(Environment):
                     obs.notification = "Aadhaar card received and verified. has_aadhaar confirmed as True."
                 else:
                     obs.notification = f"Document '{action.value or 'document'}' received and verified."
-                obs.reward = 0.5
+                obs.reward = VALID_STEP_PENALTY
 
         # ── APPROVE_SCHEME ────────────────────────────────────────────────────
         elif action.action_type == "approve_scheme":
