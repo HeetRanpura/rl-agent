@@ -1,7 +1,8 @@
 """
-Scheme Env — 30-LLM Benchmark Runner
-Runs all models sequentially, produces per-run analysis after each model,
-and a full aggregate report after all 30 are done.
+Scheme Env benchmark runner.
+
+Runs the configured model suite sequentially, captures structured inference logs,
+and produces bundled analysis artifacts for each benchmark run.
 """
 
 import os
@@ -15,6 +16,16 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 from statistics import mean, stdev
+from typing import Optional, Tuple
+
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional in some runtimes
+    load_dotenv = None
+
+
+if load_dotenv is not None:
+    load_dotenv()
 
 # =========================================================
 # CONFIGURATION
@@ -27,7 +38,7 @@ ENV_URL      = os.getenv("ENV_URL", "http://localhost:7860")
 MAX_CONCURRENT  = 1   # singleton environment — must stay 1
 TIMEOUT_SECONDS = 600
 
-# ── 12 models across capability tiers ────────────────────────────────────────
+# ── model suite across capability tiers ──────────────────────────────────────
 MODELS_TO_TEST = [
     "Qwen/Qwen2.5-7B-Instruct",       # confirmed working earlier
     "meta-llama/Llama-3.3-70B-Instruct", # confirmed working earlier  
@@ -151,6 +162,36 @@ def extract_negative_steps(output_text: str) -> int:
             if m:
                 count += 1
     return count
+
+
+def detect_run_status(output_text: str, stderr_text: str) -> Tuple[str, Optional[str]]:
+    """
+    Distinguish true model runs from provider/configuration failures so benchmark
+    reports do not treat unsupported models as genuine 0.0 capability scores.
+    """
+    combined = f"{output_text}\n{stderr_text}"
+    unsupported_markers = (
+        "model_not_supported",
+        "not supported by provider",
+        "unsupported_value",
+        "does not support chat",
+    )
+    auth_markers = (
+        "401",
+        "403",
+        "invalid api key",
+        "authentication",
+        "authorization",
+    )
+
+    lowered = combined.lower()
+    if any(marker in lowered for marker in unsupported_markers):
+        return "Unsupported", "provider_model_unsupported"
+    if any(marker in lowered for marker in auth_markers):
+        return "AuthError", "provider_auth_error"
+    if "[ERROR] agent decision failed: API_ERROR:" in combined:
+        return "ProviderError", "provider_api_error"
+    return "Completed", None
 
 
 # =========================================================
@@ -411,7 +452,8 @@ async def run_model(model: str, idx: int, total: int) -> dict:
     start_time = time.time()
     try:
         proc = await asyncio.create_subprocess_exec(
-            "python", "inference.py",
+            sys.executable,
+            "inference.py",
             env=env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -430,20 +472,29 @@ async def run_model(model: str, idx: int, total: int) -> dict:
                 f.write(f"\n\n--- STDERR ---\n{stderr}")
 
         if proc.returncode == 0:
+            run_status, error_kind = detect_run_status(stdout, stderr)
             scores         = extract_scores(stdout)
             steps          = extract_steps(stdout)
             negative_steps = extract_negative_steps(stdout)
-            analysis       = analyze_single_run(model, scores, steps, negative_steps, "Completed")
+            analysis       = analyze_single_run(model, scores, steps, negative_steps, run_status)
 
-            print(f"[RUNNER] ({idx}/{total}) Done in {elapsed}s — avg: {scores['Average']:.3f}", flush=True)
+            if run_status == "Completed":
+                print(f"[RUNNER] ({idx}/{total}) Done in {elapsed}s — avg: {scores['Average']:.3f}", flush=True)
+            else:
+                print(
+                    f"[RUNNER] ({idx}/{total}) {run_status} in {elapsed}s "
+                    f"({error_kind or 'provider issue'})",
+                    flush=True,
+                )
             return {
                 "model":          model,
-                "status":         "Completed",
+                "status":         run_status,
                 "elapsed_s":      elapsed,
                 "t1": scores["Task 1"], "t2": scores["Task 2"],
                 "t3": scores["Task 3"], "t4": scores["Task 4"],
                 "t5": scores["Task 5"], "avg": scores["Average"],
                 "analysis":       analysis,
+                "error_kind":     error_kind,
             }
         else:
             print(f"[RUNNER] ({idx}/{total}) ERROR — return code {proc.returncode}", flush=True)
