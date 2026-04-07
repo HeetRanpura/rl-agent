@@ -217,7 +217,7 @@ def get_eligible_schemes(profile: dict) -> list:
     return eligible
 
 
-def get_optimal_scheme(profile: dict) -> str | None:
+def get_optimal_scheme(profile: dict) -> Optional[str]:
     """
     Return the single most beneficial scheme for this applicant profile.
     Priority order: PMAY > MGNREGS > PMKVY > PM_SYM > AYUSHMAN_BHARAT > E_SHRAM > NFSA > PMMVY.
