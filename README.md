@@ -33,15 +33,19 @@ Millions of rural Indians access government welfare schemes through CSC operator
 
 | Action | Value | Description | Reward |
 |---|---|---|---|
-| `ask_question` | field name | Gather missing eligibility data | +1.0 (valid), -1.0 (noise/redundant) |
-| `request_document` | document name | Request verification documents | +0.5 (+1.5 for pan_card in Task 4) |
+| `ask_question` | field name | Gather missing eligibility data | 0.0 valid step, -0.10 noise/redundant |
+| `request_document` | document name | Request verification documents | 0.0 valid step |
 | `approve_scheme` | scheme name | Enroll applicant in optimal scheme | +10.0 (optimal), +3.0 (suboptimal), -5.0 (wrong) |
-| `reject_applicant` | reason string | Reject ineligible applicant | +5.0 (correct), -5.0 (incorrect) |
-| `escalate` | (empty) | Hand off contradictory case to senior officer | +10.0 (Task 4 only), -2.0 (other tasks) |
+| `reject_applicant` | category | Reject ineligible applicant | +5.0 (correct), -5.0 (incorrect) |
+| `escalate` | category or empty | Hand off contradictory case to senior officer | +10.0 (Task 4 only), -2.0 (other tasks) |
 
 **Valid field names for ask_question:** `age`, `income`, `occupation`, `has_aadhaar`
 
+**Valid document names for request_document:** `aadhaar_card`, `pan_card`, `aadhaar`, `pan`
+
 **Valid scheme names for approve_scheme:** `PMKVY`, `MGNREGS`, `PMAY`
+
+**Valid decision categories for reject/escalate:** `AGE_EXCEEDED`, `INCOME_TOO_HIGH`, `NO_ELIGIBLE_SCHEME`, `MISSING_REQUIRED_DATA`, `DATA_MISMATCH`, `DOCUMENT_CONFLICT`, `MANUAL_REVIEW_REQUIRED`
 
 ## Observation Space
 
@@ -70,10 +74,9 @@ All thresholds are strict integer comparisons — no rounding or approximation.
 
 | Event | Reward | Terminal? |
 |---|---|---|
-| Valid question from missing_data | +1.0 | No |
-| Document request (standard) | +0.5 | No |
-| PAN card verification (Task 4) | +1.5 | No |
-| Redundant or noise field query | -1.0 | No |
+| Valid question from missing_data | 0.0 | No |
+| Valid document request | 0.0 | No |
+| Redundant or noise field query | -0.10 | No |
 | Correct optimal scheme approved | +10.0 | Yes |
 | Suboptimal but eligible scheme | +3.0 | Yes |
 | Correct rejection (Task 3) | +5.0 | Yes |
@@ -130,7 +133,7 @@ A correct but inefficient agent always outscores an incorrect agent.
 Every task injects 1–3 irrelevant fields into `known_profile`:
 `marital_status`, `state_of_residence`, `number_of_children`, `bank_name`
 
-Querying any of these costs `-1.0` and reduces the final grader score. This tests whether agents can filter irrelevant context — a key real-world capability.
+Querying any of these costs `-0.10` and reduces the final grader score. This tests whether agents can filter irrelevant context — a key real-world capability.
 
 - `reports/report_<timestamp>/leaderboard_<timestamp>.csv`
 - `reports/report_<timestamp>/logs_<timestamp>/`
@@ -181,7 +184,37 @@ python benchmark_report.py \
   --logs-dir reports/report_20260404_124255/logs_20260404_124255
 ```
 
-Score variance confirmed across model capability tiers.
+## Nemotron Setup
+
+This repo is configured to work with OpenAI-compatible chat APIs, including
+Hugging Face Router and NVIDIA NIM.
+
+### Hugging Face Router
+
+```bash
+export API_BASE_URL="https://router.huggingface.co/v1"
+export MODEL_NAME="nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"
+export HF_TOKEN="your_hf_token"
+export MAX_TOKENS="1500"
+python inference.py
+```
+
+Important:
+- the older `https://api-inference.huggingface.co/models/.../v1` pattern is deprecated by Hugging Face
+- `inference.py` now rewrites that deprecated URL to Router automatically
+- actual Nemotron availability on Router still depends on which providers are enabled for your token
+
+### NVIDIA NIM
+
+```bash
+export API_BASE_URL="https://integrate.api.nvidia.com/v1"
+export MODEL_NAME="nvidia/llama-3.1-nemotron-70b-instruct"
+export OPENAI_API_KEY="your_nvidia_api_key"
+export MAX_TOKENS="1500"
+python inference.py
+```
+
+The inference path is JSON-first and does not require `<think>` tags, which makes it more robust for Nemotron-style verbose models.
 
 ## Real-World Utility
 
@@ -192,4 +225,4 @@ This environment models a task performed daily by thousands of CSC operators acr
 - **Mathematical precision** — strict integer threshold adherence
 - **AI safety alignment** — knowing when to defer to a human supervisor
 
-Training an agent to score 1.0 on all 4 tasks would produce a system deployable alongside real welfare officers to assist with applicant evaluation.
+Training an agent to score highly across all 5 tasks would produce a system deployable alongside real welfare officers to assist with applicant evaluation.
