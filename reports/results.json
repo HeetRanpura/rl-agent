@@ -1,0 +1,218 @@
+[
+  {
+    "model": "nvidia/llama-3.1-nemotron-nano-8b-v1",
+    "size": "8B",
+    "average": 0.184,
+    "tasks": {
+      "task1": {
+        "score": 0.283,
+        "std": 0.491
+      },
+      "task2": {
+        "score": 0.303,
+        "std": 0.525
+      },
+      "task3": {
+        "score": 0.0,
+        "std": 0.0
+      },
+      "task4": {
+        "score": 0.333,
+        "std": 0.577
+      },
+      "task5": {
+        "score": 0.0,
+        "std": 0.0
+      }
+    }
+  },
+  {
+    "model": "meta/llama-3.1-8b-instruct",
+    "size": "8B",
+    "average": 0.517,
+    "tasks": {
+      "task1": {
+        "score": 0.4,
+        "std": 0.458
+      },
+      "task2": {
+        "score": 0.0,
+        "std": 0.0
+      },
+      "task3": {
+        "score": 0.317,
+        "std": 0.548
+      },
+      "task4": {
+        "score": 0.867,
+        "std": 0.058
+      },
+      "task5": {
+        "score": 1.0,
+        "std": 0.0
+      }
+    }
+  },
+  {
+    "model": "nvidia/nemotron-mini-4b-instruct",
+    "size": "4B",
+    "average": 0.557,
+    "tasks": {
+      "task1": {
+        "score": 0.483,
+        "std": 0.029
+      },
+      "task2": {
+        "score": 0.667,
+        "std": 0.577
+      },
+      "task3": {
+        "score": 0.667,
+        "std": 0.577
+      },
+      "task4": {
+        "score": 0.967,
+        "std": 0.029
+      },
+      "task5": {
+        "score": 0.0,
+        "std": 0.0
+      }
+    }
+  },
+  {
+    "model": "nvidia/nemotron-3-nano-30b-a3b",
+    "size": "30B",
+    "average": 0.8,
+    "tasks": {
+      "task1": {
+        "score": 1.0,
+        "std": 0.0
+      },
+      "task2": {
+        "score": 0.0,
+        "std": 0.0
+      },
+      "task3": {
+        "score": 1.0,
+        "std": 0.0
+      },
+      "task4": {
+        "score": 1.0,
+        "std": 0.0
+      },
+      "task5": {
+        "score": 1.0,
+        "std": 0.0
+      }
+    }
+  },
+  {
+    "model": "nvidia/nemotron-3-super-120b-a12b",
+    "size": "120B",
+    "average": 0.8,
+    "tasks": {
+      "task1": {
+        "score": 1.0,
+        "std": 0.0
+      },
+      "task2": {
+        "score": 0.0,
+        "std": 0.0
+      },
+      "task3": {
+        "score": 1.0,
+        "std": 0.0
+      },
+      "task4": {
+        "score": 1.0,
+        "std": 0.0
+      },
+      "task5": {
+        "score": 1.0,
+        "std": 0.0
+      }
+    }
+  },
+  {
+    "model": "nvidia/llama-3.1-nemotron-51b-instruct",
+    "size": "51B",
+    "average": 0.951,
+    "tasks": {
+      "task1": {
+        "score": 0.8,
+        "std": 0.304
+      },
+      "task2": {
+        "score": 0.957,
+        "std": 0.045
+      },
+      "task3": {
+        "score": 1.0,
+        "std": 0.0
+      },
+      "task4": {
+        "score": 1.0,
+        "std": 0.0
+      },
+      "task5": {
+        "score": 1.0,
+        "std": 0.0
+      }
+    }
+  },
+  {
+    "model": "nvidia/llama-3.3-nemotron-super-49b-v1",
+    "size": "49B",
+    "average": 0.955,
+    "tasks": {
+      "task1": {
+        "score": 0.8,
+        "std": 0.304
+      },
+      "task2": {
+        "score": 0.973,
+        "std": 0.023
+      },
+      "task3": {
+        "score": 1.0,
+        "std": 0.0
+      },
+      "task4": {
+        "score": 1.0,
+        "std": 0.0
+      },
+      "task5": {
+        "score": 1.0,
+        "std": 0.0
+      }
+    }
+  },
+  {
+    "model": "mistralai/mistral-nemotron",
+    "size": "~56B",
+    "average": 0.967,
+    "tasks": {
+      "task1": {
+        "score": 0.833,
+        "std": 0.289
+      },
+      "task2": {
+        "score": 1.0,
+        "std": 0.0
+      },
+      "task3": {
+        "score": 1.0,
+        "std": 0.0
+      },
+      "task4": {
+        "score": 1.0,
+        "std": 0.0
+      },
+      "task5": {
+        "score": 1.0,
+        "std": 0.0
+      }
+    }
+  }
+]
