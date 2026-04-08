@@ -63,14 +63,10 @@ The benchmark is grounded in a workflow that affects welfare access, fraud preve
 - [Architecture Overview](#architecture-overview)
 - [System Architecture](#system-architecture)
 - [Agent-Environment Architecture](#agent-environment-architecture)
-- [Model Interface Architecture](#model-interface-architecture)
 - [Training Pipeline Architecture](#training-pipeline-architecture)
-- [Memory Buffer Architecture](#memory-buffer-architecture)
 - [Reward Architecture](#reward-architecture)
 - [Deployment and Inference Architecture](#deployment-and-inference-architecture)
 - [Data Flow Architecture](#data-flow-architecture)
-- [Distributed and Parallel Architecture](#distributed-and-parallel-architecture)
-- [Hardware Acceleration Architecture](#hardware-acceleration-architecture)
 - [Environment Contract](#environment-contract)
 - [Action Space](#action-space)
 - [Observation Space](#observation-space)
@@ -83,7 +79,6 @@ The benchmark is grounded in a workflow that affects welfare access, fraud preve
 - [Setup and Running](#-setup-and-running)
 - [Environment Variables](#-environment-variables)
 - [Testing](#-testing)
-- [Known Limitations](#-known-limitations)
 - [OpenEnv Compliance](#-openenv-compliance)
 
 ## Environment at a Glance
@@ -151,8 +146,6 @@ This repo has a clean separation between:
 3. the **benchmark orchestration layer**
 4. the **reporting and visualization layer**
 
-It does **not** define or train a neural network inside the repo. Instead, it evaluates external LLMs through an OpenAI-compatible API, which is why the benchmark architecture is more important here than a traditional model-weights architecture.
-
 ## System Architecture
 
 ```mermaid
@@ -208,25 +201,6 @@ sequenceDiagram
 - the environment can soft-block some wrong protocol steps and allow recovery
 - the final score depends on both correctness and efficiency
 
-## Model Interface Architecture
-
-This repo evaluates models, but does not ship a built-in policy network. The model interface architecture is therefore:
-
-- **system prompt**: hardcoded benchmark rules and decision protocol
-- **observation payload**: current `known_profile`, `missing_data`, `notification`, termination state
-- **history window**: last 10 turns of assistant/user interaction context
-- **output contract**: exactly one JSON object
-
-### Why there is no neural network architecture section
-
-The actual transformer architecture lives with the provider model you choose:
-
-- Hugging Face Router
-- NVIDIA NIM
-- or any OpenAI-compatible endpoint
-
-This repo is intentionally model-agnostic. Its job is to test decision behavior, not define a training graph.
-
 ## Training Pipeline Architecture
 
 This repository is an **evaluation and benchmarking pipeline**, not an on-policy RL training loop with replay buffers and optimizer steps. Still, there is a clear training-style pipeline structure:
@@ -250,37 +224,6 @@ flowchart TD
 - capability comparison across model sizes and families
 - exploit detection through artifact inspection
 - offline report regeneration without rerunning expensive inference
-
-## Memory Buffer Architecture
-
-There are two important memory concepts in this repo.
-
-### 1. Episode state memory
-
-The environment stores active episode state at the class level because OpenEnv request handling may instantiate per request.
-
-Stored internal state includes:
-
-- current task
-- generated persona
-- `State(episode_id, step_count)`
-- current full observation
-
-### 2. Model conversation buffer
-
-[inference.py](inference.py) keeps a bounded rolling history:
-
-- last 10 turns only
-- enough for local continuity
-- avoids unnecessary prompt growth
-- relies on current observation to carry the latest structured state
-
-### Why this design works
-
-- the environment owns canonical truth
-- the model only needs recent conversational context
-- bounded history prevents token blow-up
-- hidden environment flags remain internal
 
 ## Reward Architecture
 
@@ -348,7 +291,7 @@ flowchart TD
     C --> D["Runtime container"]
     D --> E["uvicorn server.app:app :7860"]
     E --> F["/health"]
-    G["inference.py"] --> H["Hugging Face Router or NVIDIA NIM"]
+    G["inference.py"] --> H["OpenAI"]
     G --> E
 ```
 
@@ -362,10 +305,10 @@ flowchart TD
 
 ### Inference characteristics
 
-- provider-agnostic OpenAI-compatible client
-- supports Hugging Face Router
-- supports NVIDIA NIM
-- normalizes deprecated Hugging Face API URL patterns automatically
+- all LLM calls use the OpenAI Python client
+- the client is configured from environment variables in `inference.py`
+- structured stdout logs follow `[START]`, `[STEP]`, and `[END]`
+- provider normalization remains in place for compatible endpoints
 
 ## Data Flow Architecture
 
@@ -399,50 +342,6 @@ flowchart TD
 - internal metadata is stripped before return
 - timeout enforcement happens centrally in `_finalize_step()`
 - all step paths converge through the same finalization logic
-
-## Distributed and Parallel Architecture
-
-This repo is intentionally **not** distributed at the environment layer.
-
-### Current design
-
-- `SUPPORTS_CONCURRENT_SESSIONS = False`
-- benchmark runner uses `MAX_CONCURRENT = 1`
-- shared state is protected by `threading.Lock`
-- one evaluation session should interact with the server at a time
-
-### Why this is intentional
-
-- the environment uses singleton-style shared state across HTTP requests
-- parallel episodes would corrupt correctness unless state storage were redesigned
-- sequential evaluation is more important here than throughput
-
-### Practical implication
-
-This is a deliberately **serial benchmark**, not a horizontally scaled serving stack.
-
-## Hardware Acceleration Architecture
-
-The environment server itself is lightweight and CPU-friendly. Hardware acceleration is delegated to the external inference provider.
-
-### What uses CPU locally
-
-- FastAPI / Uvicorn
-- state transitions
-- scheme checks
-- report generation with Matplotlib
-
-### What uses accelerator hardware externally
-
-- transformer inference on provider-hosted GPUs
-- model-specific acceleration on Hugging Face or NVIDIA infrastructure
-
-### Repo-level stance
-
-- no CUDA kernels in repo
-- no TPU-specific code in repo
-- no local GPU dependency required to run the environment server
-- acceleration boundary is cleanly separated from benchmark logic
 
 ## Environment Contract
 
@@ -764,29 +663,15 @@ export N_REPEATS=3
 python inference.py
 ```
 
-NVIDIA NIM:
+OpenAI-compatible endpoint:
 
 ```bash
-export OPENAI_API_KEY=nvapi-your_nvidia_key
-export API_BASE_URL=https://integrate.api.nvidia.com/v1
-export MODEL_NAME=nvidia/llama-3.3-nemotron-super-49b-v1
+export HF_TOKEN=your_api_token
+export API_BASE_URL=https://api.openai.com/v1
+export MODEL_NAME=gpt-4.1-mini
 export ENV_URL=http://localhost:7860
 python inference.py
 ```
-
-### Running the benchmark suite
-
-```bash
-python benchmark_runner.py
-```
-
-This creates timestamped bundles under:
-
-```text
-reports/report_<timestamp>/
-```
-
-with CSV, logs, manifests, summaries, and report-ready artifacts.
 
 ### Generating visual reports
 
@@ -794,24 +679,34 @@ with CSV, logs, manifests, summaries, and report-ready artifacts.
 python benchmark_report.py --run-dir reports/report_<timestamp>
 ```
 
-or:
-
-```bash
-python benchmark_report.py --latest
-```
-
 ## 🔧 Environment Variables
 
 | Variable | Default | Description |
 |---|---|---|
-| `HF_TOKEN` | unset | Hugging Face token |
-| `OPENAI_API_KEY` | unset | OpenAI-compatible provider key |
+| `HF_TOKEN` | unset | Token used by the OpenAI client for authenticated calls |
 | `API_BASE_URL` | `https://router.huggingface.co/v1` | Model endpoint |
 | `MODEL_NAME` | `Qwen/Qwen2.5-7B-Instruct` | Model identifier |
+| `LOCAL_IMAGE_NAME` | unset | Optional local image name when using `from_docker_image()` workflows |
 | `ENV_URL` | `http://localhost:7860` | Environment server URL |
 | `MAX_TOKENS` | `1500` | Max tokens per model call |
 | `N_REPEATS` | `3` | Episodes per task |
 | `INFERENCE_TEMPERATURE` | `0.0` | Sampling temperature |
+
+`inference.py` now reads:
+
+```python
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-7B-Instruct")
+HF_TOKEN = os.getenv("HF_TOKEN")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
+```
+
+and all LLM calls are made through:
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+```
 
 ## 🧪 Testing
 
@@ -832,14 +727,6 @@ Current unit tests cover:
 
 The baseline report bundle also includes archived test outputs under [reports/baseline_report/test_logs](reports/baseline_report/test_logs).
 
-## ⚠️ Known Limitations
-
-1. **Single active environment session**: evaluation should be sequential
-2. **Persona randomness introduces variance**: use `N_REPEATS >= 3` for stable comparisons
-3. **PYTHONPATH matters for local runs**: `export PYTHONPATH=.` from repo root
-4. **Strict schema validation**: invalid actions are rejected rather than tolerated
-5. **No built-in model training loop**: this is an environment and benchmarking repo, not a trainer
-
 ## ✅ OpenEnv Compliance
 
 | Requirement | Status |
@@ -854,6 +741,9 @@ The baseline report bundle also includes archived test outputs under [reports/ba
 | 5 graded tasks | ✅ |
 | FastAPI runtime | ✅ |
 | Resource declaration in yaml | ✅ |
+| `API_BASE_URL`, `MODEL_NAME`, `HF_TOKEN` read in `inference.py` | ✅ |
+| Optional `LOCAL_IMAGE_NAME` in `inference.py` | ✅ |
+| Structured `[START]` / `[STEP]` / `[END]` stdout logs | ✅ |
 
 ## Closing Note
 

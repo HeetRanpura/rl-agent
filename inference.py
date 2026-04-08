@@ -23,10 +23,11 @@ from openai import OpenAI
 # ENVIRONMENT CONFIGURATION
 # All credentials read from environment — never hardcoded.
 # =========================================================
-API_BASE_URL   = os.getenv("API_BASE_URL",   "https://router.huggingface.co/v1")
-MODEL_NAME     = os.getenv("MODEL_NAME",     "Qwen/Qwen2.5-7B-Instruct")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "") or os.getenv("HF_TOKEN", "")  # FIX A1
-ENV_URL        = os.getenv("ENV_URL",        "http://localhost:7860")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-7B-Instruct")
+HF_TOKEN = os.getenv("HF_TOKEN")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
+ENV_URL = os.getenv("ENV_URL", "http://localhost:7860")
 
 INFERENCE_TEMPERATURE = float(os.getenv("INFERENCE_TEMPERATURE", "0.0"))
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "1500"))
@@ -79,12 +80,12 @@ def normalize_provider_config(base_url: str, model_name: str) -> tuple[str, str]
 
 
 API_BASE_URL, MODEL_NAME = normalize_provider_config(API_BASE_URL, MODEL_NAME)
-client = OpenAI(base_url=API_BASE_URL, api_key=OPENAI_API_KEY)
+client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
 
-if "huggingface.co" in API_BASE_URL and not OPENAI_API_KEY:
+if "huggingface.co" in API_BASE_URL and not HF_TOKEN:
     print(
-        "[CONFIG] Missing HF_TOKEN / OPENAI_API_KEY for Hugging Face Router. "
+        "[CONFIG] Missing HF_TOKEN for the configured endpoint. "
         "Set HF_TOKEN in your environment or .env file.",
         flush=True,
     )
