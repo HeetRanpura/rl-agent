@@ -1,9 +1,0 @@
-Model,Size,Task1,Task2,Task3,Task4,Task5,Average
-mistralai/mistral-nemotron,~56B,0.833,1.0,1.0,1.0,1.0,0.967
-nvidia/llama-3.3-nemotron-super-49b-v1,49B,0.8,0.973,1.0,1.0,1.0,0.955
-nvidia/llama-3.1-nemotron-51b-instruct,51B,0.8,0.957,1.0,1.0,1.0,0.951
-nvidia/nemotron-3-nano-30b-a3b,30B,1.0,0.0,1.0,1.0,1.0,0.8
-nvidia/nemotron-3-super-120b-a12b,120B,1.0,0.0,1.0,1.0,1.0,0.8
-nvidia/nemotron-mini-4b-instruct,4B,0.483,0.667,0.667,0.967,0.0,0.557
-meta/llama-3.1-8b-instruct,8B,0.4,0.0,0.317,0.867,1.0,0.517
-nvidia/llama-3.1-nemotron-nano-8b-v1,8B,0.283,0.303,0.0,0.333,0.0,0.184
