@@ -66,6 +66,7 @@ This repository is structured to satisfy the official Round 1 requirements:
 - meaningful reward shaping over the trajectory
 - root-level `inference.py` using the OpenAI client
 - Dockerfile plus Hugging Face Space deployment metadata
+- pre-submission validation via `scripts/pre-validation-script.sh`
 - README coverage for environment description, action space, observation space, tasks, setup, and baseline scores
 
 ## Table of Contents
@@ -90,6 +91,7 @@ This repository is structured to satisfy the official Round 1 requirements:
 - [Setup and Running](#-setup-and-running)
 - [Environment Variables](#-environment-variables)
 - [Testing](#-testing)
+- [Pre-Submission Validation](#-pre-submission-validation)
 - [OpenEnv Compliance](#-openenv-compliance)
 
 ## Environment at a Glance
@@ -704,6 +706,94 @@ Current unit tests cover:
 - grader score floor and penalty math
 
 When benchmark verification outputs are generated, they are written under `reports/test_logs/`.
+
+## ✅ Pre-Submission Validation
+
+To make hackathon submission checks repeatable, the repo includes a dedicated pre-validation script:
+
+```bash
+./scripts/pre-validation-script.sh <ping_url> [repo_dir]
+```
+
+Example:
+
+```bash
+cd /tmp/rl-agent-readme-pr
+./scripts/pre-validation-script.sh https://advikdivekar-scheme-enrollment-env.hf.space /tmp/rl-agent-readme-pr
+```
+
+### What the script checks
+
+- repository structure and required files
+- `inference.py` environment-variable contract
+- OpenAI client usage and structured `[START]`, `[STEP]`, `[END]` logs
+- OpenEnv surface requirements from `openenv.yaml`
+- README coverage for action space, observation space, setup, tasks, and baseline outputs
+- live Hugging Face Space `/reset` and `/health`
+- Docker build success
+- `openenv validate`
+- Python compile sanity
+- `pytest tests/`
+
+### Passing validation output
+
+```text
+========================================
+  OpenEnv Submission Validator
+========================================
+[16:37:15] Repo:     /tmp/rl-agent-readme-pr
+[16:37:15] Ping URL: https://advikdivekar-scheme-enrollment-env.hf.space
+
+[16:37:15] Step 1/8: Repo structure checks ...
+[16:37:15] PASSED -- README present: README.md
+[16:37:15] PASSED -- Root inference script present: inference.py
+[16:37:15] PASSED -- openenv.yaml present: openenv.yaml
+[16:37:15] PASSED -- Dockerfile present: Dockerfile
+[16:37:15] PASSED -- Root models.py present: models.py
+[16:37:15] PASSED -- server package present: server
+[16:37:15] PASSED -- tests directory present: tests
+[16:37:15] Step 2/8: Inference contract checks ...
+[16:37:15] PASSED -- OpenAI client imported in inference.py
+[16:37:15] PASSED -- API_BASE_URL read from env with default
+[16:37:15] PASSED -- MODEL_NAME read from env with default
+[16:37:15] PASSED -- HF_TOKEN read from env without default
+[16:37:15] PASSED -- LOCAL_IMAGE_NAME optionally supported
+[16:37:15] PASSED -- OpenAI client configured from required env vars
+[16:37:15] PASSED -- Structured START log marker present
+[16:37:15] PASSED -- Structured STEP log marker present
+[16:37:15] PASSED -- Structured END log marker present
+[16:37:15] Step 3/8: OpenEnv spec surface checks ...
+[16:37:15] PASSED -- openenv.yaml declares spec_version
+[16:37:15] PASSED -- openenv.yaml declares runtime
+[16:37:15] PASSED -- openenv.yaml declares app entrypoint
+[16:37:15] PASSED -- openenv.yaml declares port
+[16:37:15] PASSED -- Environment defines reset()
+[16:37:15] PASSED -- Environment defines step()
+[16:37:15] PASSED -- Environment exposes state property/method
+[16:37:15] PASSED -- Detected 3+ task definitions in environment logic
+[16:37:15] Step 4/8: README submission-content checks ...
+[16:37:15] PASSED -- README documents action space
+[16:37:15] PASSED -- README documents observation space
+[16:37:15] PASSED -- README documents setup instructions
+[16:37:15] PASSED -- README documents tasks
+[16:37:15] PASSED -- README documents baseline outputs
+[16:37:15] Step 5/8: Pinging HF Space (https://advikdivekar-scheme-enrollment-env.hf.space/reset) ...
+[16:37:17] PASSED -- HF Space is live and responds to /reset
+[16:37:18] PASSED -- HF Space /health responds with HTTP 200
+[16:37:18] Step 6/8: Running docker build ...
+[16:37:47] PASSED -- Docker build succeeded
+[16:37:47] Step 7/8: Running openenv validate ...
+[16:38:52] PASSED -- openenv validate passed
+[16:38:52]   [OK] workspace: Ready for multi-mode deployment
+[16:38:52] Step 8/8: Local quality checks ...
+[16:38:53] PASSED -- Key Python files compile cleanly
+[16:40:07] PASSED -- pytest tests/ passed
+
+========================================
+  Validation checks passed: 35
+  Submission looks ready for hackathon review.
+========================================
+```
 
 ## ✅ OpenEnv Compliance
 
