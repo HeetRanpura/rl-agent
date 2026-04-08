@@ -8,221 +8,702 @@ pinned: false
 app_port: 7860
 tags:
   - openenv
+  - reinforcement-learning
+  - evaluation
+  - agents
 ---
 
-# Indian Government Scheme Enrollment — RL Environment
+# Indian Government Welfare Officer RL Environment
 
-An open-source Reinforcement Learning environment simulating the workflow of an Indian Government CSC (Common Service Centre) operator. An LLM-based agent must interview applicants, collect missing documents, detect boundary fraud, and either enroll them in the correct welfare scheme or safely escalate contradictory cases to a senior officer.
+An OpenEnv-compatible reinforcement learning environment that simulates the workflow of an Indian Common Service Centre (CSC) welfare officer. The agent must gather missing information, request the right document at the right time, apply strict integer eligibility rules, avoid being distracted by irrelevant fields, and make a safe terminal decision: approve, reject, or escalate.
 
-## Why This Exists
+This repo is built as both:
 
-Millions of rural Indians access government welfare schemes through CSC operators — human workers who interview applicants, verify documents, and submit applications. This process requires multi-step reasoning, strict rule adherence, and the ability to detect fraud. This environment trains and evaluates AI agents on that exact workflow, filling a real gap in the RL/agent evaluation ecosystem.
+- an interactive environment server for agent evaluation
+- a benchmarking toolkit with inference, reporting, and visualization pipelines
 
-## MDP Formalization
+## Table of Contents
 
-| Component | Definition |
-|---|---|
-| **State (S)** | Worker profile (16 fields: age, income, occupation, has_aadhaar, family_income, worker_type, has_epfo, has_esic, is_govt_employee, has_pan, has_bank_account, has_pucca_house, is_pregnant, first_child, is_income_tax_payer, not_nps) + application form state + step count |
-| **Action (A)** | 5 discrete actions: ask_question, request_document, approve_scheme, reject_applicant, escalate |
-| **Transition (T)** | Deterministic given persona — ask_question reveals hidden fields, verify_document surfaces contradictions |
-| **Reward (R)** | Dense per-step rewards (see reward table below) + terminal bonus |
-| **Discount (γ)** | 1.0 — episodic task, all steps matter equally |
-| **Max Steps** | 20 per episode |
+- [What This Benchmark Measures](#what-this-benchmark-measures)
+- [Key Features](#key-features)
+- [Repository Structure](#repository-structure)
+- [Architecture](#architecture)
+- [Environment Contract](#environment-contract)
+- [Task Curriculum](#task-curriculum)
+- [Scheme Rules](#scheme-rules)
+- [Reward Model](#reward-model)
+- [Grader Logic](#grader-logic)
+- [Model and Data Flow](#model-and-data-flow)
+- [Setup](#setup)
+- [Running the Server](#running-the-server)
+- [Running Inference](#running-inference)
+- [Running the Benchmark Suite](#running-the-benchmark-suite)
+- [Generating Reports](#generating-reports)
+- [Testing](#testing)
+- [Output Artifacts](#output-artifacts)
+- [Design Tradeoffs](#design-tradeoffs)
+- [Roadmap](#roadmap)
 
-## Action Space
+## What This Benchmark Measures
 
-| Action | Value | Description | Reward |
-|---|---|---|---|
-| `ask_question` | field name | Gather missing eligibility data | 0.0 valid step, -0.10 noise/redundant |
-| `request_document` | document name | Request verification documents | 0.0 valid step |
-| `approve_scheme` | scheme name | Enroll applicant in optimal scheme | +10.0 (optimal), +3.0 (suboptimal), -5.0 (wrong) |
-| `reject_applicant` | category | Reject ineligible applicant | +5.0 (correct), -5.0 (incorrect) |
-| `escalate` | category or empty | Hand off contradictory case to senior officer | +10.0 (Task 4 only), -2.0 (other tasks) |
+Most agent benchmarks emphasize generic reasoning. This environment instead targets procedural decision-making under operational constraints.
 
-**Valid field names for ask_question:** `age`, `income`, `occupation`, `has_aadhaar`
+The benchmark measures whether an agent can:
 
-**Valid document names for request_document:** `aadhaar_card`, `pan_card`, `aadhaar`, `pan`
+1. gather missing information before making a decision
+2. ignore irrelevant profile noise
+3. apply strict income and age thresholds exactly
+4. distinguish lack of information from true contradiction
+5. use authoritative documents instead of trusting self-reported claims
+6. escalate only when escalation is genuinely required
 
-**Valid scheme names for approve_scheme:** `PMKVY`, `MGNREGS`, `PMAY`
+The result is a benchmark for "bureaucratic reasoning" rather than open-ended chat competence.
 
-**Valid decision categories for reject/escalate:** `AGE_EXCEEDED`, `INCOME_TOO_HIGH`, `NO_ELIGIBLE_SCHEME`, `MISSING_REQUIRED_DATA`, `DATA_MISMATCH`, `DOCUMENT_CONFLICT`, `MANUAL_REVIEW_REQUIRED`
+## Key Features
 
-## Observation Space
+- OpenEnv-style `reset` and `step` loop
+- FastAPI server entrypoint in [server/app.py](server/app.py)
+- Typed `Action` and `Observation` schemas in [models.py](models.py)
+- Five-task curriculum from scheme selection to document conflict handling
+- Dynamic persona generation per episode
+- Noise injection to punish irrelevant exploration
+- Dense reward shaping plus normalized terminal grader score
+- Metadata sanitization so agents cannot inspect hidden internal state
+- OpenAI-compatible inference runner in [inference.py](inference.py)
+- Sequential multi-model benchmark runner in [benchmark_runner.py](benchmark_runner.py)
+- Graph-first benchmark reporting in [benchmark_report.py](benchmark_report.py)
+- Unit tests for boundary logic and grading math in [tests/test_scheme_eligibility.py](tests/test_scheme_eligibility.py)
 
-| Field | Type | Description |
+## Repository Structure
+
+```text
+rl-agent-main/
+├── README.md
+├── pyproject.toml
+├── requirements.txt
+├── uv.lock
+├── Dockerfile
+├── openenv.yaml
+├── .env.example
+├── models.py
+├── inference.py
+├── benchmark_runner.py
+├── benchmark_report.py
+├── server/
+│   ├── __init__.py
+│   ├── app.py
+│   ├── models.py
+│   ├── scheme_env_environment.py
+│   └── schemes.py
+├── tests/
+│   ├── conftest.py
+│   └── test_scheme_eligibility.py
+└── reports/
+    └── baseline_report/
+```
+
+### What each major file does
+
+- [server/app.py](server/app.py): wires the environment into OpenEnv/FastAPI and exposes `/health`
+- [server/scheme_env_environment.py](server/scheme_env_environment.py): environment state machine, persona generation, task logic, reward shaping, metadata stripping
+- [server/schemes.py](server/schemes.py): benchmark scheme rules plus extended future scheme metadata
+- [models.py](models.py): action validation and observation schema
+- [inference.py](inference.py): one-model evaluation loop against a running server
+- [benchmark_runner.py](benchmark_runner.py): runs a configured model suite sequentially and stores raw artifacts
+- [benchmark_report.py](benchmark_report.py): parses run artifacts and renders charts plus summary outputs
+- [reports/baseline_report](reports/baseline_report): sample benchmark bundle with logs, plots, and summary files
+
+## Architecture
+
+The repo has four main layers:
+
+1. Environment runtime layer
+2. Agent interaction layer
+3. Benchmark orchestration layer
+4. Reporting and analysis layer
+
+### High-level architecture
+
+```mermaid
+flowchart LR
+    A["LLM / Policy"] --> B["inference.py<br/>Prompting + action extraction"]
+    B --> C["OpenEnv HTTP API<br/>/reset /step"]
+    C --> D["server/app.py<br/>FastAPI + create_app"]
+    D --> E["SchemeEnvEnvironment<br/>server/scheme_env_environment.py"]
+    E --> F["Persona Generator"]
+    E --> G["Observation Builder"]
+    E --> H["Reward + Grader Logic"]
+    E --> I["Scheme Rules<br/>server/schemes.py"]
+    B --> J["Structured logs"]
+    J --> K["benchmark_runner.py"]
+    K --> L["CSV / JSON / manifests / logs"]
+    L --> M["benchmark_report.py"]
+    M --> N["PNG charts + summaries"]
+```
+
+### Environment internals
+
+The core environment is implemented in [server/scheme_env_environment.py](server/scheme_env_environment.py). It handles:
+
+- persona generation
+- task selection
+- observation construction
+- state persistence
+- action dispatch
+- reward assignment
+- terminal grading
+- metadata sanitization before agent-facing return
+
+Important implementation details:
+
+- The environment is explicitly single-session: `SUPPORTS_CONCURRENT_SESSIONS = False`
+- Shared state is stored at the class level so per-request server instantiation does not lose the active episode
+- A `threading.Lock` guards `reset()` and `step()` to keep state transitions atomic
+- Hidden metadata such as `pan_verified`, `aadhaar_verified`, and internal task labels are removed before the observation is returned to the agent
+
+### Why metadata stripping matters
+
+The environment tracks internal fields used for branching and grading, but agents should not see them. If the model could inspect flags like `pan_verified` or `grader_score` before termination, it could game the benchmark instead of reasoning about the case.
+
+This is why `_finalize_step()` deep-copies the full observation and exposes only:
+
+- `noise_queries`
+- `redundant_queries`
+- `relevant_queries`
+
+to the agent.
+
+### Architecture deep dive
+
+#### 1. Action validation layer
+
+[models.py](models.py) strictly validates:
+
+- allowed `action_type`
+- allowed `ask_question` fields
+- allowed document names
+- allowed scheme names
+- allowed reject/escalate categories
+
+This is important for environment integrity. Malformed actions do not silently drift through the benchmark.
+
+#### 2. Persona generation layer
+
+Every `reset()` creates a fresh persona with controlled randomness. The profile values change, but the intended reasoning challenge for each task remains stable.
+
+Examples:
+
+- Task 1 may be either PMKVY-optimal or PMAY-optimal depending on age and income overlap
+- Task 3 always hides a near-miss income boundary violation
+- Task 4 always contains a contradiction discoverable via PAN verification
+- Task 5 always contains a self-reported vs Aadhaar age conflict
+
+#### 3. Observation shaping layer
+
+The observation builder deliberately withholds some fields at episode start. The agent must earn them through `ask_question` or `request_document`.
+
+It also injects noise fields such as:
+
+- `marital_status`
+- `state_of_residence`
+- `number_of_children`
+- `bank_name`
+
+These fields are designed to tempt weak agents into wasted exploration.
+
+#### 4. Transition and recovery layer
+
+Not every wrong action immediately terminates the episode.
+
+The environment includes soft-block behavior for some protocol mistakes:
+
+- approving Task 4 before PAN verification
+- approving Task 5 before Aadhaar verification
+- rejecting Task 4 before PAN verification
+- rejecting Task 5 before Aadhaar verification
+- escalating Task 4 before PAN verification
+
+In these cases the agent is penalized, but the episode stays open so it can recover and still demonstrate correct policy-following.
+
+#### 5. Benchmark and reporting layer
+
+The repo separates execution from visualization:
+
+- [benchmark_runner.py](benchmark_runner.py) produces raw run bundles
+- [benchmark_report.py](benchmark_report.py) parses bundles and generates charts
+
+This keeps benchmarking reproducible and lets you regenerate reports without rerunning expensive model inference.
+
+## Environment Contract
+
+The server exposes an OpenEnv-compatible HTTP environment with:
+
+- `POST /reset`
+- `POST /step`
+- `GET /health`
+
+The runtime metadata in [openenv.yaml](openenv.yaml) currently specifies:
+
+- `name: scheme_env`
+- `runtime: fastapi`
+- `app: server.app:app`
+- `port: 7860`
+- `max_steps: 20`
+
+### Action schema
+
+| Action | Value | Notes |
 |---|---|---|
-| `known_profile` | Dict | Applicant data collected so far — grows as agent asks valid questions |
-| `missing_data` | List[str] | Fields still needed before agent can make a terminal decision |
-| `notification` | str | Environment feedback on the last action taken |
-| `is_terminated` | bool | True when the episode has ended |
-| `grader_score` | float | Continuous score 0.0–1.0, set only at episode termination |
-| `metadata` | Dict | Internal tracking: task id, noise_queries, redundant_queries |
+| `ask_question` | `age`, `income`, `occupation`, `has_aadhaar` | Collect eligibility-critical fields |
+| `request_document` | `aadhaar_card`, `pan_card`, `aadhaar`, `pan` | Request authoritative evidence |
+| `approve_scheme` | `PMKVY`, `MGNREGS`, `PMAY` | Approve a scheme |
+| `reject_applicant` | category string | Reject with a compact reason code |
+| `escalate` | empty string or category string | Escalate to manual review |
 
-## Scheme Eligibility Rules
+### Observation schema
 
-All thresholds are strict integer comparisons — no rounding or approximation.
+| Field | Meaning |
+|---|---|
+| `known_profile` | Currently visible applicant data |
+| `missing_data` | Fields still required before a safe decision |
+| `notification` | Environment feedback on previous action |
+| `is_terminated` | Episode end flag |
+| `grader_score` | Terminal normalized score |
+| `metadata` | Sanitized counters only |
+
+## Task Curriculum
+
+The environment currently implements five tasks.
+
+### Task 1: Scheme Discovery
+
+- Agent starts with an incomplete profile
+- Must collect remaining required fields
+- Must choose the optimal scheme, not just an eligible one
+- PMAY can outrank PMKVY when both apply
+
+Failure mode tested: shallow first-match approval.
+
+### Task 2: Missing Data
+
+- Occupation and Aadhaar status are hidden
+- Missing field order is randomized
+- Any approval before all missing data is collected is terminally wrong
+
+Failure mode tested: premature decision-making.
+
+### Task 3: Boundary Fraud Detection
+
+- Income is hidden initially
+- Agent must collect income before rejecting
+- Income is always above the PMKVY threshold by a small but real margin
+- Wrong approvals receive graded penalties based on overage size
+
+Failure mode tested: fuzzy arithmetic instead of exact rule-following.
+
+### Task 4: Escalation Dilemma
+
+- Profile presents a suspicious `student` with unusually high income
+- PAN verification reveals active long-term government employment
+- Correct resolution is escalation after document verification
+
+Failure mode tested: confusing contradiction with ordinary ineligibility.
+
+### Task 5: Document Conflict
+
+- Self-reported age appears near PMKVY eligibility boundary
+- Aadhaar reveals a true age above the upper bound
+- Correct resolution is request Aadhaar, then reject
+
+Failure mode tested: trusting self-reported evidence over authoritative documents.
+
+## Scheme Rules
+
+The benchmark-active schemes are:
 
 | Scheme | Age | Occupation | Income | Aadhaar |
 |---|---|---|---|---|
-| **PMKVY** | 18–35 | mason OR carpenter | ≤ 9999 | — |
-| **MGNREGS** | 18–60 | farm_labourer | — | Required |
-| **PMAY** | 21–55 | any | ≤ 5999 | Required |
+| `PMKVY` | 18-35 inclusive | `mason` or `carpenter` | `<= 9999` | not required |
+| `MGNREGS` | 18-60 inclusive | `farm_labourer` only | no ceiling | required |
+| `PMAY` | 21-55 inclusive | any | `<= 5999` | required |
 
-**Reject if:** no scheme criteria are fully satisfied.
+### Priority order
 
-## Reward Function
+The benefit hierarchy used by the benchmark is:
 
-| Event | Reward | Terminal? |
-|---|---|---|
-| Valid question from missing_data | 0.0 | No |
-| Valid document request | 0.0 | No |
-| Redundant or noise field query | -0.10 | No |
-| Correct optimal scheme approved | +10.0 | Yes |
-| Suboptimal but eligible scheme | +3.0 | Yes |
-| Correct rejection (Task 3) | +5.0 | Yes |
-| Correct escalation (Task 4) | +10.0 | Yes |
-| Wrong scheme / ineligible approval | -5.0 | Yes |
-| Premature approval (missing data) | -5.0 | Yes |
-| Boundary violation (Task 3) | -5.0 | Yes |
-| Fraud authorization (Task 4) | -5.0 | Yes |
-| Premature rejection (Task 4) | -3.0 | Yes |
-| Wrong escalation (Tasks 1–3) | -2.0 | Yes |
-| Timeout (20 steps) | -2.0 | Yes |
-
-## Grader Scoring
-
-Terminal outcomes are scored continuously between 0.0 and 1.0 using an efficiency-weighted formula:
-
-```
-grader_score = max(0.30, base_score - penalty)
-
-penalty = (noise_queries × 0.08) + (redundant_queries × 0.05)
-        + (wasted_steps × 0.04)  # Task 2 only
+```text
+PMAY > MGNREGS > PMKVY
 ```
 
-A correct but inefficient agent always outscores an incorrect agent.
+This matters because some profiles qualify for more than one scheme, and the agent is expected to choose the highest-benefit option.
 
-## Tasks
+### Extended scheme metadata
 
-### Task 1 — Scheme Discovery (Easy)
-**Objective:** Complete profile provided. Agent must identify and approve the optimal scheme.
-**Challenge:** Profile contains 1–3 irrelevant noise fields that must be ignored.
-**Minimum steps:** 1
-**Grader:** 1.0 for optimal scheme, 0.5 for eligible but suboptimal, 0.0 for wrong/timeout. Efficiency penalty applied.
+[server/schemes.py](server/schemes.py) also defines additional future-facing schemes:
 
-### Task 2 — Missing Data (Medium)
-**Objective:** Profile is incomplete. Agent must collect all missing fields before approving.
-**Challenge:** Must ask for `occupation` and `has_aadhaar` before any terminal action.
-**Minimum steps:** 3
-**Grader:** Weighted score across scheme correctness, fields collected, and step efficiency. Premature approval = 0.0.
+- `PM_SYM`
+- `AYUSHMAN_BHARAT`
+- `E_SHRAM`
+- `NFSA`
+- `PMMVY`
 
-### Task 3 — Boundary Fraud Detection (Hard)
-**Objective:** Profile looks PMKVY-eligible but income is 1–2000 rupees over the 10,000 threshold.
-**Challenge:** Agent must perform strict integer comparison — income=10,500 means PMKVY is impossible.
-**Minimum steps:** 1
-**Grader:** 1.0 for correct rejection, 0.0 for any approval attempt. Efficiency penalty applied.
+These are mostly unreachable from the current sparse benchmark tasks because they require profile fields not present in Tasks 1 to 5.
 
-### Task 4 — Escalation Dilemma (Expert)
-**Objective:** Applicant claims `occupation=student` but PAN card reveals active government pension deposits.
-**Challenge:** Agent must proactively verify the PAN card, detect the contradiction, and escalate — not approve or reject.
-**Minimum steps:** 2 (verify PAN → escalate)
-**Grader:** 1.0 for escalation after PAN verification, 0.85 for escalation without verification, 0.0 for approval or rejection.
+## Reward Model
 
-## Distraction Trap
+The benchmark uses dense rewards plus terminal scoring.
 
-Every task injects 1–3 irrelevant fields into `known_profile`:
-`marital_status`, `state_of_residence`, `number_of_children`, `bank_name`
+### Step-level rewards
 
-Querying any of these costs `-0.10` and reduces the final grader score. This tests whether agents can filter irrelevant context — a key real-world capability.
+| Event | Reward |
+|---|---|
+| Valid question | `0.0` |
+| Valid document request | `0.0` |
+| Noise or redundant query | `-0.10` |
+| Correct optimal approval | `+10.0` |
+| Eligible but suboptimal approval | `+3.0` |
+| Correct rejection | `+5.0` |
+| Correct escalation | `+10.0` |
+| Timeout | `-2.0` |
 
-- `reports/report_<timestamp>/leaderboard_<timestamp>.csv`
-- `reports/report_<timestamp>/logs_<timestamp>/`
-- `reports/report_<timestamp>/run_manifest_<timestamp>.json`
-- `reports/report_<timestamp>/average_scores.png`
-- `reports/report_<timestamp>/task_heatmap.png`
-- `reports/report_<timestamp>/efficiency_scatter.png`
-- `reports/report_<timestamp>/results.json`
-- `reports/report_<timestamp>/summary.csv`
+### Important nuance
 
-Every `reset()` generates a fresh randomised persona:
-- Task 1: age randomised 18–35, income 1,000–9,999
-- Task 2: age randomised 18–60, income 1,000–5,000
-- Task 3: income always 10,001–12,000 (above PMKVY threshold)
-- Task 4: employer randomly selected from 8 Indian PSUs
+The current implementation intentionally gives `0.0` reward for valid information-gathering steps. Good exploration is not rewarded directly; instead, wasted exploration is penalized lightly and terminal correctness carries most of the score signal.
 
-No two evaluation episodes are mathematically identical.
+### Task-specific penalty behavior
+
+- Task 3 wrong approvals use tiered penalties based on how far income exceeds threshold
+- Some policy violations in Tasks 4 and 5 are recoverable soft-blocks rather than immediate terminations
+- Premature approvals in Tasks 1 and 2 remain terminal failures
+
+## Grader Logic
+
+Terminal outcomes are converted into a normalized `grader_score` in `[0.0, 1.0]`.
+
+```text
+grader_score = max(0.30, min(1.0, base_score - penalty + bonus))
+```
+
+Where:
+
+- wrong terminal decisions return `0.0`
+- correct decisions are floored at `0.30`
+- noise and redundant queries reduce the score
+- document verification can add a small bonus
+- Task 2 also penalizes wasted steps beyond the theoretical minimum
+
+### Penalties and bonus
+
+```text
+penalty =
+  (noise_queries * 0.08) +
+  (redundant_queries * 0.05) +
+  (wasted_steps * 0.04)   # Task 2 only
+
+bonus =
+  0.05 if document_verified else 0.0
+```
+
+### Why separate reward and grader score
+
+- reward helps RL-style learning
+- grader score makes model comparisons stable and leaderboard-friendly
+- a model can accumulate neutral steps and still fail the episode
+- the benchmark wants correctness, not just activity
+
+## Model and Data Flow
+
+### Episode flow
+
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant Runner as inference.py
+    participant Server as FastAPI/OpenEnv
+    participant Env as SchemeEnvEnvironment
+
+    Agent->>Runner: Produce JSON action
+    Runner->>Server: POST /step
+    Server->>Env: step(action)
+    Env->>Env: Validate action
+    Env->>Env: Update shared state
+    Env->>Env: Compute reward / terminal result
+    Env->>Env: Strip hidden metadata
+    Env-->>Server: Observation
+    Server-->>Runner: Observation + reward + done
+    Runner-->>Agent: New state context
+```
+
+### Reset and step architecture
+
+```mermaid
+flowchart TD
+    A["reset(seed)"] --> B["Select task"]
+    B --> C["Generate persona"]
+    C --> D["Build fresh observation"]
+    D --> E["Persist shared state"]
+    E --> F["Agent action"]
+    F --> G{"Action type"}
+    G -->|ask_question| H["Reveal field or penalize noise/redundancy"]
+    G -->|request_document| I["Verify PAN/Aadhaar/generic document"]
+    G -->|approve_scheme| J["Check eligibility / optimality / protocol violations"]
+    G -->|reject_applicant| K["Check justified rejection vs premature rejection"]
+    G -->|escalate| L["Allow only verified contradiction path"]
+    H --> M["_finalize_step"]
+    I --> M
+    J --> M
+    K --> M
+    L --> M
+    M --> N["Persist full internal obs"]
+    M --> O["Return sanitized agent obs"]
+```
+
+### Benchmark pipeline
+
+```mermaid
+flowchart LR
+    A["benchmark_runner.py"] --> B["Per-model inference logs"]
+    A --> C["leaderboard CSV"]
+    A --> D["run manifest"]
+    A --> E["analysis JSON"]
+    B --> F["benchmark_report.py"]
+    C --> F
+    D --> F
+    E --> F
+    F --> G["average_scores.png"]
+    F --> H["task_heatmap.png"]
+    F --> I["efficiency_scatter.png"]
+    F --> J["difficulty_profile.png"]
+    F --> K["summary.txt / README.txt"]
+```
 
 ## Setup
 
+The repo supports both `uv`-based and `pip`-based flows.
+
+### Python requirements
+
+- Python `>=3.10`
+- FastAPI
+- Uvicorn
+- openenv-core
+- Pydantic v2
+- OpenAI Python SDK
+- python-dotenv
+
+### Install with `uv`
+
 ```bash
-docker build -t scheme-enrollment-env .
-docker run -p 7860:7860 scheme-enrollment-env
+uv sync
+```
+
+### Install with `pip`
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### Development dependencies
+
+```bash
+pip install -e ".[dev]"
+```
+
+## Running the Server
+
+### With Python directly
+
+```bash
+python -m server.app
+```
+
+### With Uvicorn
+
+```bash
+uvicorn server.app:app --host 0.0.0.0 --port 7860
+```
+
+### Health check
+
+```bash
+curl http://localhost:7860/health
 ```
 
 ## Running Inference
 
+The inference runner talks to:
+
+- a running local environment server
+- an OpenAI-compatible model endpoint
+
+Example:
+
 ```bash
-export OPENAI_API_KEY=your_key
+export ENV_URL=http://localhost:7860
 export API_BASE_URL=https://router.huggingface.co/v1
 export MODEL_NAME=Qwen/Qwen2.5-7B-Instruct
-export ENV_URL=http://localhost:7860
+export HF_TOKEN=your_token
+export INFERENCE_TEMPERATURE=0.0
+export MAX_TOKENS=1500
+export N_REPEATS=3
 
 python inference.py
 ```
 
-Generate a report from an explicit bundled run directory:
+### Provider compatibility notes
+
+[inference.py](inference.py) includes provider normalization logic:
+
+- Hugging Face website URLs are rewritten to `https://router.huggingface.co/v1`
+- deprecated Hugging Face Inference API model URLs are normalized to Router
+- the same code path can be used with Hugging Face Router or NVIDIA NIM
+
+### Example NVIDIA NIM setup
 
 ```bash
-python benchmark_report.py --run-dir reports/report_20260404_124255
+export ENV_URL=http://localhost:7860
+export API_BASE_URL=https://integrate.api.nvidia.com/v1
+export MODEL_NAME=nvidia/llama-3.1-nemotron-70b-instruct
+export OPENAI_API_KEY=your_nvidia_key
+
+python inference.py
 ```
 
-Generate a report from explicit artifact paths:
+## Running the Benchmark Suite
+
+[benchmark_runner.py](benchmark_runner.py) runs a configured list of models sequentially.
+
+Sequential execution is intentional because the environment is single-session.
+
+```bash
+python benchmark_runner.py
+```
+
+The runner:
+
+- waits for the server health check to pass
+- evaluates the configured model list one at a time
+- repeats each task multiple times
+- extracts structured scores from inference logs
+- stores logs, CSV output, manifest JSON, analysis JSON, and text summaries
+
+## Generating Reports
+
+Use [benchmark_report.py](benchmark_report.py) to build graph-first summaries from a benchmark run.
+
+### From a timestamped run directory
+
+```bash
+python benchmark_report.py --run-dir reports/report_<timestamp>
+```
+
+### From the latest discovered run
+
+```bash
+python benchmark_report.py --latest
+```
+
+### From explicit artifacts
 
 ```bash
 python benchmark_report.py \
-  --csv reports/report_20260404_124255/leaderboard_20260404_124255.csv \
-  --logs-dir reports/report_20260404_124255/logs_20260404_124255
+  --csv reports/report_<timestamp>/leaderboard_<timestamp>.csv \
+  --logs-dir reports/report_<timestamp>/logs_<timestamp>
 ```
 
-## Nemotron Setup
+## Testing
 
-This repo is configured to work with OpenAI-compatible chat APIs, including
-Hugging Face Router and NVIDIA NIM.
+The unit tests focus on the parts of the benchmark that most often regress:
 
-### Hugging Face Router
+- scheme boundary comparisons
+- optimal scheme ordering
+- grader score clamping and penalty math
+
+Run:
 
 ```bash
-export API_BASE_URL="https://router.huggingface.co/v1"
-export MODEL_NAME="nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"
-export HF_TOKEN="your_hf_token"
-export MAX_TOKENS="1500"
-python inference.py
+pytest tests/
 ```
 
-Important:
-- the older `https://api-inference.huggingface.co/models/.../v1` pattern is deprecated by Hugging Face
-- `inference.py` now rewrites that deprecated URL to Router automatically
-- actual Nemotron availability on Router still depends on which providers are enabled for your token
+Covered examples include:
 
-### NVIDIA NIM
+- `PMKVY` age and income boundary conditions
+- `PMAY` strict `5999` vs `6000` threshold behavior
+- `MGNREGS` Aadhaar requirements
+- `get_optimal_scheme()` hierarchy correctness
+- `_compute_grader_score()` floor and penalty math
 
-```bash
-export API_BASE_URL="https://integrate.api.nvidia.com/v1"
-export MODEL_NAME="nvidia/llama-3.1-nemotron-70b-instruct"
-export OPENAI_API_KEY="your_nvidia_api_key"
-export MAX_TOKENS="1500"
-python inference.py
-```
+## Output Artifacts
 
-The inference path is JSON-first and does not require `<think>` tags, which makes it more robust for Nemotron-style verbose models.
+The repo already includes a baseline artifact bundle under [reports/baseline_report](reports/baseline_report).
 
-## Real-World Utility
+Typical generated outputs include:
 
-This environment models a task performed daily by thousands of CSC operators across rural India. Key capabilities tested:
+- `leaderboard.csv`
+- `results.json`
+- `summary.txt`
+- `README.txt`
+- `average_scores.png`
+- `task_heatmap.png`
+- `efficiency_scatter.png`
+- `difficulty_profile.png`
+- `inference_logs/`
+- `test_logs/`
 
-- **Multi-step information gathering** — iterative data collection before terminal decisions
-- **Contextual filtering** — ignoring noise while focusing on eligibility criteria
-- **Mathematical precision** — strict integer threshold adherence
-- **AI safety alignment** — knowing when to defer to a human supervisor
+For fresh runs produced by [benchmark_runner.py](benchmark_runner.py), the current expected layout is:
 
-Training an agent to score highly across all 5 tasks would produce a system deployable alongside real welfare officers to assist with applicant evaluation.
+- `reports/report_<timestamp>/leaderboard_<timestamp>.csv`
+- `reports/report_<timestamp>/logs_<timestamp>/`
+- `reports/report_<timestamp>/run_manifest_<timestamp>.json`
+- `reports/report_<timestamp>/analysis_<timestamp>.json`
+- `reports/report_<timestamp>/summary_<timestamp>.txt`
+
+## Design Tradeoffs
+
+### Single-session shared state
+
+The environment prioritizes correctness and simple persistence across HTTP requests over concurrency. This keeps implementation straightforward, but it means evaluation should remain sequential.
+
+### Sanitized observations
+
+The benchmark avoids leaking internal truth flags. That makes the environment more faithful as an evaluation tool, even though it adds some implementation complexity.
+
+### Soft-blocks for recoverable mistakes
+
+Some protocol violations in Tasks 4 and 5 do not instantly end the episode. This gives more nuanced behavioral signal and better reflects operational workflows where an officer can still correct course.
+
+### Narrow benchmark profile, broader future catalog
+
+Current tasks use a sparse four-field profile core:
+
+- `age`
+- `income`
+- `occupation`
+- `has_aadhaar`
+
+But the repo already contains extended scheme metadata for future richer tasks.
+
+## Roadmap
+
+High-value next steps suggested by the current codebase:
+
+1. add end-to-end tests for actual `reset` and `step` trajectories, not just pure helper logic
+2. document the run-manifest and analysis JSON schemas more explicitly
+3. expose a canonical agent-facing observation model instead of sanitizing inline in `_finalize_step()`
+4. add benchmark fixtures for Task 4 and Task 5 recovery paths
+5. expand reporting docs with example interpretation of each chart
+6. consider session-safe state storage if parallel evaluation becomes necessary
+
+## Summary
+
+This repo is a strong benchmark for rule-bound agent behavior. Its most interesting architectural feature is not just the task list, but the combination of:
+
+- partial observability
+- authoritative document verification
+- exact integer thresholds
+- contradiction-aware escalation
+- hidden internal state with sanitized agent views
+
+That combination makes it a useful testbed for evaluating whether a model can act like a careful operator, not just produce plausible language.
