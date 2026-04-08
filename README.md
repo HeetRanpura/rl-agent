@@ -13,71 +13,97 @@ tags:
   - agents
 ---
 
-# Indian Government Welfare Officer RL Environment
+# 🏛️ Indian Government Scheme Enrollment — RL Environment
 
-An OpenEnv-compatible reinforcement learning environment that simulates the workflow of an Indian Common Service Centre (CSC) welfare officer. The agent must gather missing information, request the right document at the right time, apply strict integer eligibility rules, avoid being distracted by irrelevant fields, and make a safe terminal decision: approve, reject, or escalate.
+> *A reinforcement learning benchmark for bureaucratic reasoning: interviewing applicants, verifying documents, applying strict scheme rules, detecting fraud, and knowing when to escalate rather than decide.*
 
-This repo is built as both:
+[![HuggingFace Space](https://img.shields.io/badge/🤗%20HuggingFace-Space-blue)](https://huggingface.co/spaces/advikdivekar/scheme-enrollment-env)
+[![GitHub](https://img.shields.io/badge/GitHub-Repository-black)](https://github.com/advikdivekar/rl-agent)
+[![OpenEnv](https://img.shields.io/badge/OpenEnv-Compliant-green)](https://huggingface.co/openenv)
+[![Tests](https://img.shields.io/badge/Tests-20%20Passing-brightgreen)](tests/)
+[![Tasks](https://img.shields.io/badge/Tasks-5%20Graded-orange)](#-the-5-tasks)
 
-- an interactive environment server for agent evaluation
-- a benchmarking toolkit with inference, reporting, and visualization pipelines
+## The Case Study
+
+Priya is a CSC operator in Barmer, Rajasthan. She interviews dozens of applicants every day across a wooden desk, a government-issue computer, and a slow internet connection. One afternoon, a young man walks in claiming to be a student. He wants to enroll in PMKVY, a skill-training scheme. On the surface, his profile looks plausible.
+
+But something feels wrong. His income is unusually high for a student. Priya asks for his PAN card. It reveals six years of active pension-linked employment from a public sector company. He is not a student. He is attempting to claim a benefit under false pretenses.
+
+Priya does not guess. She does not overreach. She escalates the case.
+
+**This environment trains AI agents to behave like Priya.**
+
+Not just to read a table of rules, but to:
+
+- gather missing information before acting
+- verify the right document at the right time
+- apply exact arithmetic boundaries
+- ignore irrelevant context
+- distinguish ineligibility from contradiction
+- escalate only when escalation is genuinely required
+
+## Why This Environment Exists
+
+Most RL and agent benchmarks focus on coding, games, search, or generic dialogue. Very few test policy compliance under partial observability, exact thresholds, and procedural safety.
+
+This environment exists to measure a harder and more realistic capability cluster:
+
+- **Policy compliance under uncertainty**: the agent must collect evidence before deciding
+- **Fraud detection through document verification**: contradictions emerge only after the correct document is requested
+- **Boundary arithmetic**: `9999` qualifies, `10000` does not
+- **Escalation protocol**: the agent must know when not to decide
+- **Noise filtering**: irrelevant profile fields appear alongside real signal
+
+The benchmark is grounded in a workflow that affects welfare access, fraud prevention, and administrative fairness.
 
 ## Table of Contents
 
-- [What This Benchmark Measures](#what-this-benchmark-measures)
-- [Key Features](#key-features)
+- [Environment at a Glance](#environment-at-a-glance)
 - [Repository Structure](#repository-structure)
-- [Architecture](#architecture)
+- [Architecture Overview](#architecture-overview)
+- [System Architecture](#system-architecture)
+- [Agent-Environment Architecture](#agent-environment-architecture)
+- [Model Interface Architecture](#model-interface-architecture)
+- [Training Pipeline Architecture](#training-pipeline-architecture)
+- [Memory Buffer Architecture](#memory-buffer-architecture)
+- [Reward Architecture](#reward-architecture)
+- [Deployment and Inference Architecture](#deployment-and-inference-architecture)
+- [Data Flow Architecture](#data-flow-architecture)
+- [Distributed and Parallel Architecture](#distributed-and-parallel-architecture)
+- [Hardware Acceleration Architecture](#hardware-acceleration-architecture)
 - [Environment Contract](#environment-contract)
-- [Task Curriculum](#task-curriculum)
-- [Scheme Rules](#scheme-rules)
-- [Reward Model](#reward-model)
-- [Grader Logic](#grader-logic)
-- [Model and Data Flow](#model-and-data-flow)
-- [Setup](#setup)
-- [Running the Server](#running-the-server)
-- [Running Inference](#running-inference)
-- [Running the Benchmark Suite](#running-the-benchmark-suite)
-- [Generating Reports](#generating-reports)
-- [Testing](#testing)
-- [Output Artifacts](#output-artifacts)
-- [Design Tradeoffs](#design-tradeoffs)
-- [Roadmap](#roadmap)
+- [Action Space](#action-space)
+- [Observation Space](#observation-space)
+- [Scheme Eligibility Rules](#scheme-eligibility-rules)
+- [The 5 Tasks](#-the-5-tasks)
+- [The Distraction Trap](#-the-distraction-trap)
+- [Key Engineering Decisions](#-key-engineering-decisions)
+- [Benchmark Outputs and Screenshots](#-benchmark-outputs-and-screenshots)
+- [Baseline Results](#-baseline-results)
+- [Setup and Running](#-setup-and-running)
+- [Environment Variables](#-environment-variables)
+- [Testing](#-testing)
+- [Known Limitations](#-known-limitations)
+- [OpenEnv Compliance](#-openenv-compliance)
 
-## What This Benchmark Measures
+## Environment at a Glance
 
-Most agent benchmarks emphasize generic reasoning. This environment instead targets procedural decision-making under operational constraints.
-
-The benchmark measures whether an agent can:
-
-1. gather missing information before making a decision
-2. ignore irrelevant profile noise
-3. apply strict income and age thresholds exactly
-4. distinguish lack of information from true contradiction
-5. use authoritative documents instead of trusting self-reported claims
-6. escalate only when escalation is genuinely required
-
-The result is a benchmark for "bureaucratic reasoning" rather than open-ended chat competence.
-
-## Key Features
-
-- OpenEnv-style `reset` and `step` loop
-- FastAPI server entrypoint in [server/app.py](server/app.py)
-- Typed `Action` and `Observation` schemas in [models.py](models.py)
-- Five-task curriculum from scheme selection to document conflict handling
-- Dynamic persona generation per episode
-- Noise injection to punish irrelevant exploration
-- Dense reward shaping plus normalized terminal grader score
-- Metadata sanitization so agents cannot inspect hidden internal state
-- OpenAI-compatible inference runner in [inference.py](inference.py)
-- Sequential multi-model benchmark runner in [benchmark_runner.py](benchmark_runner.py)
-- Graph-first benchmark reporting in [benchmark_report.py](benchmark_report.py)
-- Unit tests for boundary logic and grading math in [tests/test_scheme_eligibility.py](tests/test_scheme_eligibility.py)
+| Component | Definition |
+|---|---|
+| **State (S)** | Applicant profile, partial observation state, hidden persona fields, step count |
+| **Action (A)** | `ask_question`, `request_document`, `approve_scheme`, `reject_applicant`, `escalate` |
+| **Transition (T)** | Deterministic given persona and task template |
+| **Reward (R)** | Intermediate shaping plus terminal outcome rewards |
+| **Horizon** | 20 steps per episode |
+| **Grader** | Terminal normalized score `0.0` to `1.0` |
+| **Server** | FastAPI via OpenEnv `create_app` |
+| **Inference** | OpenAI-compatible client, provider-agnostic |
+| **Benchmarking** | Sequential multi-model runner + graph-first report generator |
 
 ## Repository Structure
 
 ```text
-rl-agent-main/
+.
 ├── README.md
 ├── pyproject.toml
 ├── requirements.txt
@@ -86,6 +112,7 @@ rl-agent-main/
 ├── openenv.yaml
 ├── .env.example
 ├── models.py
+├── client.py
 ├── inference.py
 ├── benchmark_runner.py
 ├── benchmark_report.py
@@ -104,295 +131,196 @@ rl-agent-main/
 
 ### What each major file does
 
-- [server/app.py](server/app.py): wires the environment into OpenEnv/FastAPI and exposes `/health`
-- [server/scheme_env_environment.py](server/scheme_env_environment.py): environment state machine, persona generation, task logic, reward shaping, metadata stripping
-- [server/schemes.py](server/schemes.py): benchmark scheme rules plus extended future scheme metadata
-- [models.py](models.py): action validation and observation schema
-- [inference.py](inference.py): one-model evaluation loop against a running server
-- [benchmark_runner.py](benchmark_runner.py): runs a configured model suite sequentially and stores raw artifacts
-- [benchmark_report.py](benchmark_report.py): parses run artifacts and renders charts plus summary outputs
-- [reports/baseline_report](reports/baseline_report): sample benchmark bundle with logs, plots, and summary files
+- [server/app.py](server/app.py): FastAPI/OpenEnv server entrypoint exposing `/reset`, `/step`, and `/health`
+- [server/scheme_env_environment.py](server/scheme_env_environment.py): environment lifecycle, task logic, reward shaping, step transitions, shared state, metadata sanitization
+- [server/schemes.py](server/schemes.py): scheme metadata, eligibility logic, optimal scheme selection
+- [models.py](models.py): root `Action` and `Observation` schemas used by inference and server logic
+- [client.py](client.py): OpenEnv client wrapper for typed environment access
+- [inference.py](inference.py): single-model evaluation loop
+- [benchmark_runner.py](benchmark_runner.py): multi-model benchmark orchestration
+- [benchmark_report.py](benchmark_report.py): report and chart generation from benchmark artifacts
+- [tests/test_scheme_eligibility.py](tests/test_scheme_eligibility.py): boundary-condition and grading tests
+- [reports/baseline_report](reports/baseline_report): sample output bundle with charts, logs, summaries, and raw result files
 
-## Architecture
+## Architecture Overview
 
-The repo has four main layers:
+This repo has a clean separation between:
 
-1. Environment runtime layer
-2. Agent interaction layer
-3. Benchmark orchestration layer
-4. Reporting and analysis layer
+1. the **environment runtime**
+2. the **model interaction loop**
+3. the **benchmark orchestration layer**
+4. the **reporting and visualization layer**
 
-### High-level architecture
+It does **not** define or train a neural network inside the repo. Instead, it evaluates external LLMs through an OpenAI-compatible API, which is why the benchmark architecture is more important here than a traditional model-weights architecture.
+
+## System Architecture
 
 ```mermaid
 flowchart LR
-    A["LLM / Policy"] --> B["inference.py<br/>Prompting + action extraction"]
+    A["LLM / External Policy"] --> B["inference.py<br/>Prompting + JSON extraction"]
     B --> C["OpenEnv HTTP API<br/>/reset /step"]
     C --> D["server/app.py<br/>FastAPI + create_app"]
     D --> E["SchemeEnvEnvironment<br/>server/scheme_env_environment.py"]
-    E --> F["Persona Generator"]
+    E --> F["Persona Generation"]
     E --> G["Observation Builder"]
     E --> H["Reward + Grader Logic"]
     E --> I["Scheme Rules<br/>server/schemes.py"]
-    B --> J["Structured logs"]
+    B --> J["Run Logs"]
     J --> K["benchmark_runner.py"]
     K --> L["CSV / JSON / manifests / logs"]
     L --> M["benchmark_report.py"]
-    M --> N["PNG charts + summaries"]
+    M --> N["Charts + summaries + screenshots"]
 ```
 
-### Environment internals
-
-The core environment is implemented in [server/scheme_env_environment.py](server/scheme_env_environment.py). It handles:
-
-- persona generation
-- task selection
-- observation construction
-- state persistence
-- action dispatch
-- reward assignment
-- terminal grading
-- metadata sanitization before agent-facing return
-
-Important implementation details:
-
-- The environment is explicitly single-session: `SUPPORTS_CONCURRENT_SESSIONS = False`
-- Shared state is stored at the class level so per-request server instantiation does not lose the active episode
-- A `threading.Lock` guards `reset()` and `step()` to keep state transitions atomic
-- Hidden metadata such as `pan_verified`, `aadhaar_verified`, and internal task labels are removed before the observation is returned to the agent
-
-### Why metadata stripping matters
-
-The environment tracks internal fields used for branching and grading, but agents should not see them. If the model could inspect flags like `pan_verified` or `grader_score` before termination, it could game the benchmark instead of reasoning about the case.
-
-This is why `_finalize_step()` deep-copies the full observation and exposes only:
-
-- `noise_queries`
-- `redundant_queries`
-- `relevant_queries`
-
-to the agent.
-
-### Architecture deep dive
-
-#### 1. Action validation layer
-
-[models.py](models.py) strictly validates:
-
-- allowed `action_type`
-- allowed `ask_question` fields
-- allowed document names
-- allowed scheme names
-- allowed reject/escalate categories
-
-This is important for environment integrity. Malformed actions do not silently drift through the benchmark.
-
-#### 2. Persona generation layer
-
-Every `reset()` creates a fresh persona with controlled randomness. The profile values change, but the intended reasoning challenge for each task remains stable.
-
-Examples:
-
-- Task 1 may be either PMKVY-optimal or PMAY-optimal depending on age and income overlap
-- Task 3 always hides a near-miss income boundary violation
-- Task 4 always contains a contradiction discoverable via PAN verification
-- Task 5 always contains a self-reported vs Aadhaar age conflict
-
-#### 3. Observation shaping layer
-
-The observation builder deliberately withholds some fields at episode start. The agent must earn them through `ask_question` or `request_document`.
-
-It also injects noise fields such as:
-
-- `marital_status`
-- `state_of_residence`
-- `number_of_children`
-- `bank_name`
-
-These fields are designed to tempt weak agents into wasted exploration.
-
-#### 4. Transition and recovery layer
-
-Not every wrong action immediately terminates the episode.
-
-The environment includes soft-block behavior for some protocol mistakes:
-
-- approving Task 4 before PAN verification
-- approving Task 5 before Aadhaar verification
-- rejecting Task 4 before PAN verification
-- rejecting Task 5 before Aadhaar verification
-- escalating Task 4 before PAN verification
-
-In these cases the agent is penalized, but the episode stays open so it can recover and still demonstrate correct policy-following.
-
-#### 5. Benchmark and reporting layer
-
-The repo separates execution from visualization:
-
-- [benchmark_runner.py](benchmark_runner.py) produces raw run bundles
-- [benchmark_report.py](benchmark_report.py) parses bundles and generates charts
-
-This keeps benchmarking reproducible and lets you regenerate reports without rerunning expensive model inference.
-
-## Environment Contract
-
-The server exposes an OpenEnv-compatible HTTP environment with:
-
-- `POST /reset`
-- `POST /step`
-- `GET /health`
-
-The runtime metadata in [openenv.yaml](openenv.yaml) currently specifies:
-
-- `name: scheme_env`
-- `runtime: fastapi`
-- `app: server.app:app`
-- `port: 7860`
-- `max_steps: 20`
-
-### Action schema
-
-| Action | Value | Notes |
-|---|---|---|
-| `ask_question` | `age`, `income`, `occupation`, `has_aadhaar` | Collect eligibility-critical fields |
-| `request_document` | `aadhaar_card`, `pan_card`, `aadhaar`, `pan` | Request authoritative evidence |
-| `approve_scheme` | `PMKVY`, `MGNREGS`, `PMAY` | Approve a scheme |
-| `reject_applicant` | category string | Reject with a compact reason code |
-| `escalate` | empty string or category string | Escalate to manual review |
-
-### Observation schema
-
-| Field | Meaning |
-|---|---|
-| `known_profile` | Currently visible applicant data |
-| `missing_data` | Fields still required before a safe decision |
-| `notification` | Environment feedback on previous action |
-| `is_terminated` | Episode end flag |
-| `grader_score` | Terminal normalized score |
-| `metadata` | Sanitized counters only |
-
-## Task Curriculum
-
-The environment currently implements five tasks.
-
-### Task 1: Scheme Discovery
-
-- Agent starts with an incomplete profile
-- Must collect remaining required fields
-- Must choose the optimal scheme, not just an eligible one
-- PMAY can outrank PMKVY when both apply
-
-Failure mode tested: shallow first-match approval.
-
-### Task 2: Missing Data
-
-- Occupation and Aadhaar status are hidden
-- Missing field order is randomized
-- Any approval before all missing data is collected is terminally wrong
-
-Failure mode tested: premature decision-making.
-
-### Task 3: Boundary Fraud Detection
-
-- Income is hidden initially
-- Agent must collect income before rejecting
-- Income is always above the PMKVY threshold by a small but real margin
-- Wrong approvals receive graded penalties based on overage size
-
-Failure mode tested: fuzzy arithmetic instead of exact rule-following.
-
-### Task 4: Escalation Dilemma
-
-- Profile presents a suspicious `student` with unusually high income
-- PAN verification reveals active long-term government employment
-- Correct resolution is escalation after document verification
-
-Failure mode tested: confusing contradiction with ordinary ineligibility.
-
-### Task 5: Document Conflict
-
-- Self-reported age appears near PMKVY eligibility boundary
-- Aadhaar reveals a true age above the upper bound
-- Correct resolution is request Aadhaar, then reject
-
-Failure mode tested: trusting self-reported evidence over authoritative documents.
-
-## Scheme Rules
-
-The benchmark-active schemes are:
-
-| Scheme | Age | Occupation | Income | Aadhaar |
-|---|---|---|---|---|
-| `PMKVY` | 18-35 inclusive | `mason` or `carpenter` | `<= 9999` | not required |
-| `MGNREGS` | 18-60 inclusive | `farm_labourer` only | no ceiling | required |
-| `PMAY` | 21-55 inclusive | any | `<= 5999` | required |
-
-### Priority order
-
-The benefit hierarchy used by the benchmark is:
-
-```text
-PMAY > MGNREGS > PMKVY
+### Runtime layers
+
+- **Inference layer**: talks to external models and formats actions
+- **API layer**: standard OpenEnv-compatible transport over HTTP
+- **Environment layer**: task logic, hidden persona state, reward logic
+- **Data layer**: scheme rules and typed schemas
+- **Reporting layer**: benchmark aggregation and visualization
+
+## Agent-Environment Architecture
+
+```mermaid
+sequenceDiagram
+    participant Agent as LLM Agent
+    participant Runner as inference.py
+    participant API as FastAPI/OpenEnv
+    participant Env as SchemeEnvEnvironment
+
+    Agent->>Runner: JSON action
+    Runner->>API: POST /step
+    API->>Env: step(action)
+    Env->>Env: Validate action
+    Env->>Env: Update hidden state
+    Env->>Env: Compute reward and terminal result
+    Env->>Env: Strip hidden metadata
+    Env-->>API: Observation
+    API-->>Runner: Observation + reward + done
+    Runner-->>Agent: Updated state context
 ```
 
-This matters because some profiles qualify for more than one scheme, and the agent is expected to choose the highest-benefit option.
+### Core interaction pattern
 
-### Extended scheme metadata
+- the agent never mutates internal state directly
+- every step is mediated through a strict typed action schema
+- the environment can soft-block some wrong protocol steps and allow recovery
+- the final score depends on both correctness and efficiency
 
-[server/schemes.py](server/schemes.py) also defines additional future-facing schemes:
+## Model Interface Architecture
 
-- `PM_SYM`
-- `AYUSHMAN_BHARAT`
-- `E_SHRAM`
-- `NFSA`
-- `PMMVY`
+This repo evaluates models, but does not ship a built-in policy network. The model interface architecture is therefore:
 
-These are mostly unreachable from the current sparse benchmark tasks because they require profile fields not present in Tasks 1 to 5.
+- **system prompt**: hardcoded benchmark rules and decision protocol
+- **observation payload**: current `known_profile`, `missing_data`, `notification`, termination state
+- **history window**: last 10 turns of assistant/user interaction context
+- **output contract**: exactly one JSON object
 
-## Reward Model
+### Why there is no neural network architecture section
 
-The benchmark uses dense rewards plus terminal scoring.
+The actual transformer architecture lives with the provider model you choose:
 
-### Step-level rewards
+- Hugging Face Router
+- NVIDIA NIM
+- or any OpenAI-compatible endpoint
+
+This repo is intentionally model-agnostic. Its job is to test decision behavior, not define a training graph.
+
+## Training Pipeline Architecture
+
+This repository is an **evaluation and benchmarking pipeline**, not an on-policy RL training loop with replay buffers and optimizer steps. Still, there is a clear training-style pipeline structure:
+
+```mermaid
+flowchart TD
+    A["Environment Server"] --> B["inference.py<br/>single-model episodes"]
+    B --> C["Per-task mean/std scores"]
+    C --> D["benchmark_runner.py<br/>multi-model orchestration"]
+    D --> E["Run bundle<br/>CSV + JSON + manifests + raw logs"]
+    E --> F["benchmark_report.py"]
+    F --> G["Leaderboard charts"]
+    F --> H["Task heatmaps"]
+    F --> I["Difficulty profile"]
+    F --> J["Summary artifacts"]
+```
+
+### What this pipeline enables
+
+- repeated evaluation over randomized personas
+- capability comparison across model sizes and families
+- exploit detection through artifact inspection
+- offline report regeneration without rerunning expensive inference
+
+## Memory Buffer Architecture
+
+There are two important memory concepts in this repo.
+
+### 1. Episode state memory
+
+The environment stores active episode state at the class level because OpenEnv request handling may instantiate per request.
+
+Stored internal state includes:
+
+- current task
+- generated persona
+- `State(episode_id, step_count)`
+- current full observation
+
+### 2. Model conversation buffer
+
+[inference.py](inference.py) keeps a bounded rolling history:
+
+- last 10 turns only
+- enough for local continuity
+- avoids unnecessary prompt growth
+- relies on current observation to carry the latest structured state
+
+### Why this design works
+
+- the environment owns canonical truth
+- the model only needs recent conversational context
+- bounded history prevents token blow-up
+- hidden environment flags remain internal
+
+## Reward Architecture
+
+The reward system has three layers:
+
+1. **intermediate shaping**
+2. **terminal outcome reward**
+3. **continuous grader score**
+
+### Intermediate shaping
 
 | Event | Reward |
 |---|---|
-| Valid question | `0.0` |
-| Valid document request | `0.0` |
-| Noise or redundant query | `-0.10` |
+| Valid `ask_question` | `0.0` |
+| Valid `request_document` | `0.0` |
+| Noise query | `-0.10` |
+| Redundant query | `-0.10` |
+| Soft-block protocol violation | `-1.0` to `-1.5` depending on task/context |
+
+### Terminal outcomes
+
+| Event | Reward |
+|---|---|
 | Correct optimal approval | `+10.0` |
-| Eligible but suboptimal approval | `+3.0` |
-| Correct rejection | `+5.0` |
 | Correct escalation | `+10.0` |
+| Correct rejection | `+5.0` |
+| Suboptimal but eligible approval | `+3.0` |
+| Wrong escalation | `-2.0` |
+| Wrong rejection | `-5.0` |
+| Ineligible approval | `-5.0` |
+| Premature approval | `-5.0` |
 | Timeout | `-2.0` |
 
-### Important nuance
-
-The current implementation intentionally gives `0.0` reward for valid information-gathering steps. Good exploration is not rewarded directly; instead, wasted exploration is penalized lightly and terminal correctness carries most of the score signal.
-
-### Task-specific penalty behavior
-
-- Task 3 wrong approvals use tiered penalties based on how far income exceeds threshold
-- Some policy violations in Tasks 4 and 5 are recoverable soft-blocks rather than immediate terminations
-- Premature approvals in Tasks 1 and 2 remain terminal failures
-
-## Grader Logic
-
-Terminal outcomes are converted into a normalized `grader_score` in `[0.0, 1.0]`.
+### Continuous grader
 
 ```text
 grader_score = max(0.30, min(1.0, base_score - penalty + bonus))
 ```
 
 Where:
-
-- wrong terminal decisions return `0.0`
-- correct decisions are floored at `0.30`
-- noise and redundant queries reduce the score
-- document verification can add a small bonus
-- Task 2 also penalizes wasted steps beyond the theoretical minimum
-
-### Penalties and bonus
 
 ```text
 penalty =
@@ -404,306 +332,531 @@ bonus =
   0.05 if document_verified else 0.0
 ```
 
-### Why separate reward and grader score
+### Why this design is strong
 
-- reward helps RL-style learning
-- grader score makes model comparisons stable and leaderboard-friendly
-- a model can accumulate neutral steps and still fail the episode
-- the benchmark wants correctness, not just activity
+- correct but sloppy agents still outrank wrong agents
+- agents cannot farm intermediate reward
+- document protocol adherence is rewarded
+- score remains leaderboard-friendly
 
-## Model and Data Flow
-
-### Episode flow
-
-```mermaid
-sequenceDiagram
-    participant Agent
-    participant Runner as inference.py
-    participant Server as FastAPI/OpenEnv
-    participant Env as SchemeEnvEnvironment
-
-    Agent->>Runner: Produce JSON action
-    Runner->>Server: POST /step
-    Server->>Env: step(action)
-    Env->>Env: Validate action
-    Env->>Env: Update shared state
-    Env->>Env: Compute reward / terminal result
-    Env->>Env: Strip hidden metadata
-    Env-->>Server: Observation
-    Server-->>Runner: Observation + reward + done
-    Runner-->>Agent: New state context
-```
-
-### Reset and step architecture
+## Deployment and Inference Architecture
 
 ```mermaid
 flowchart TD
-    A["reset(seed)"] --> B["Select task"]
-    B --> C["Generate persona"]
-    C --> D["Build fresh observation"]
-    D --> E["Persist shared state"]
-    E --> F["Agent action"]
-    F --> G{"Action type"}
-    G -->|ask_question| H["Reveal field or penalize noise/redundancy"]
-    G -->|request_document| I["Verify PAN/Aadhaar/generic document"]
-    G -->|approve_scheme| J["Check eligibility / optimality / protocol violations"]
-    G -->|reject_applicant| K["Check justified rejection vs premature rejection"]
-    G -->|escalate| L["Allow only verified contradiction path"]
-    H --> M["_finalize_step"]
-    I --> M
-    J --> M
-    K --> M
-    L --> M
-    M --> N["Persist full internal obs"]
-    M --> O["Return sanitized agent obs"]
+    A["Dockerfile"] --> B["Pinned openenv-base image"]
+    B --> C["uv sync --frozen"]
+    C --> D["Runtime container"]
+    D --> E["uvicorn server.app:app :7860"]
+    E --> F["/health"]
+    G["inference.py"] --> H["Hugging Face Router or NVIDIA NIM"]
+    G --> E
 ```
 
-### Benchmark pipeline
+### Deployment characteristics
+
+- Dockerfile uses a multi-stage build
+- base image is sha256-pinned
+- `uv.lock` is used for reproducible dependency resolution
+- server runs with `uvicorn server.app:app`
+- health checks hit `/health`
+
+### Inference characteristics
+
+- provider-agnostic OpenAI-compatible client
+- supports Hugging Face Router
+- supports NVIDIA NIM
+- normalizes deprecated Hugging Face API URL patterns automatically
+
+## Data Flow Architecture
 
 ```mermaid
-flowchart LR
-    A["benchmark_runner.py"] --> B["Per-model inference logs"]
-    A --> C["leaderboard CSV"]
-    A --> D["run manifest"]
-    A --> E["analysis JSON"]
-    B --> F["benchmark_report.py"]
-    C --> F
-    D --> F
-    E --> F
-    F --> G["average_scores.png"]
-    F --> H["task_heatmap.png"]
-    F --> I["efficiency_scatter.png"]
-    F --> J["difficulty_profile.png"]
-    F --> K["summary.txt / README.txt"]
+flowchart TD
+    A["reset(seed)"] --> B["generate_dynamic_persona(task_id)"]
+    B --> C["_make_fresh_obs(task, persona)"]
+    C --> D["Inject 1-3 noise fields"]
+    D --> E["Return initial observation"]
+    E --> F["Agent chooses action"]
+    F --> G["step(action)"]
+    G --> H{"Action type"}
+    H -->|ask_question| I["Reveal field or penalize noise/redundancy"]
+    H -->|request_document| J["Reveal document-backed truth"]
+    H -->|approve_scheme| K["Check optimality or protocol violation"]
+    H -->|reject_applicant| L["Check rejection validity"]
+    H -->|escalate| M["Allow only verified contradiction path"]
+    I --> N["_compute_grader_score at terminal only"]
+    J --> N
+    K --> N
+    L --> N
+    M --> N
+    N --> O["_finalize_step()"]
+    O --> P["Persist full internal state"]
+    O --> Q["Return sanitized observation to agent"]
 ```
 
-## Setup
+### Important data flow properties
 
-The repo supports both `uv`-based and `pip`-based flows.
+- hidden persona flags never go directly to the model
+- internal metadata is stripped before return
+- timeout enforcement happens centrally in `_finalize_step()`
+- all step paths converge through the same finalization logic
 
-### Python requirements
+## Distributed and Parallel Architecture
 
-- Python `>=3.10`
-- FastAPI
-- Uvicorn
-- openenv-core
-- Pydantic v2
-- OpenAI Python SDK
-- python-dotenv
+This repo is intentionally **not** distributed at the environment layer.
 
-### Install with `uv`
+### Current design
 
-```bash
-uv sync
+- `SUPPORTS_CONCURRENT_SESSIONS = False`
+- benchmark runner uses `MAX_CONCURRENT = 1`
+- shared state is protected by `threading.Lock`
+- one evaluation session should interact with the server at a time
+
+### Why this is intentional
+
+- the environment uses singleton-style shared state across HTTP requests
+- parallel episodes would corrupt correctness unless state storage were redesigned
+- sequential evaluation is more important here than throughput
+
+### Practical implication
+
+This is a deliberately **serial benchmark**, not a horizontally scaled serving stack.
+
+## Hardware Acceleration Architecture
+
+The environment server itself is lightweight and CPU-friendly. Hardware acceleration is delegated to the external inference provider.
+
+### What uses CPU locally
+
+- FastAPI / Uvicorn
+- state transitions
+- scheme checks
+- report generation with Matplotlib
+
+### What uses accelerator hardware externally
+
+- transformer inference on provider-hosted GPUs
+- model-specific acceleration on Hugging Face or NVIDIA infrastructure
+
+### Repo-level stance
+
+- no CUDA kernels in repo
+- no TPU-specific code in repo
+- no local GPU dependency required to run the environment server
+- acceleration boundary is cleanly separated from benchmark logic
+
+## Environment Contract
+
+The environment follows the OpenEnv contract with:
+
+- `POST /reset`
+- `POST /step`
+- `GET /health`
+
+[openenv.yaml](openenv.yaml) currently specifies:
+
+- `name: scheme_env`
+- `version: 0.2.0`
+- `runtime: fastapi`
+- `app: server.app:app`
+- `port: 7860`
+- `max_steps: 20`
+
+## Action Space
+
+| Action | Valid Values | Description | Reward |
+|---|---|---|---|
+| `ask_question` | `age`, `income`, `occupation`, `has_aadhaar` | Request a specific eligibility field | `0.0` valid, `-0.10` redundant/noise |
+| `request_document` | `aadhaar_card`, `pan_card`, `aadhaar`, `pan` | Request an official verification document | `0.0` valid, reveals hidden truth |
+| `approve_scheme` | `PMKVY`, `MGNREGS`, `PMAY` | Enroll the applicant in a scheme | `+10.0`, `+3.0`, or `-5.0` |
+| `reject_applicant` | `AGE_EXCEEDED`, `INCOME_TOO_HIGH`, `NO_ELIGIBLE_SCHEME`, `MISSING_REQUIRED_DATA`, `DATA_MISMATCH`, `DOCUMENT_CONFLICT` | Reject with a concise reason code | `+5.0` or `-5.0` |
+| `escalate` | `DATA_MISMATCH`, `MANUAL_REVIEW_REQUIRED`, or empty | Escalate to a senior officer | correct only in contradiction path |
+
+The action space is intentionally small, real-world, and exploit-resistant.
+
+## Observation Space
+
+Each step returns a structured observation:
+
+| Field | Type | Description |
+|---|---|---|
+| `known_profile` | `Dict[str, Any]` | Applicant data collected so far |
+| `missing_data` | `List[str]` | Fields still required before a valid terminal decision |
+| `notification` | `str` | Natural-language feedback from the environment |
+| `is_terminated` | `bool` | Episode has ended |
+| `grader_score` | `Optional[float]` | Terminal normalized score |
+| `metadata` | `Dict[str, Any]` | Agent-visible counters only |
+
+### Metadata exposure policy
+
+The agent sees only:
+
+- `noise_queries`
+- `redundant_queries`
+- `relevant_queries`
+
+Internal fields such as `pan_verified`, `aadhaar_verified`, and hidden task markers are stripped before transmission.
+
+## Scheme Eligibility Rules
+
+All comparisons use strict integer arithmetic.
+
+| Scheme | Full Name | Age Range | Occupation | Income Ceiling | Aadhaar | Benefit |
+|---|---|---|---|---|---|---|
+| **PMKVY** | Pradhan Mantri Kaushal Vikas Yojana | 18 to 35 | `mason` or `carpenter` | `<= 9999` | Not required | Rs 8,000 training stipend |
+| **MGNREGS** | Mahatma Gandhi National Rural Employment Guarantee Scheme | 18 to 60 | `farm_labourer` only | None | Required | 100 days wage employment |
+| **PMAY** | Pradhan Mantri Awaas Yojana | 21 to 55 | Any | `<= 5999` | Required | Rs 1.2 lakh housing grant |
+
+### Priority rule
+
+When multiple schemes are eligible:
+
+```text
+PMAY > MGNREGS > PMKVY
 ```
 
-### Install with `pip`
+The repo also defines future-facing extended schemes in [server/schemes.py](server/schemes.py), but current benchmark tasks are built around the core three.
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+## 🧠 The 5 Tasks
+
+### Task 1 — Scheme Discovery `[Easy]`
+
+The agent starts with a partially hidden profile and must collect the remaining eligibility fields before approving the **optimal** scheme, not merely an eligible one.
+
+| Parameter | Value |
+|---|---|
+| Profile at reset | `age` and `income` visible, `occupation` and `has_aadhaar` hidden |
+| Persona range | age 18 to 35, income 1,000 to 9,999 |
+| Minimum steps | 3 |
+| Core skill | benefit-aware scheme ranking |
+
+### Task 2 — Missing Data `[Medium]`
+
+The applicant file is incomplete. The agent must collect all required fields before making any terminal decision.
+
+| Parameter | Value |
+|---|---|
+| Profile at reset | age + income visible, randomized missing field order |
+| Optimal scheme | MGNREGS once fields are collected |
+| Minimum steps | 3 |
+| Core skill | procedural completeness |
+
+### Task 3 — Boundary Fraud Detection `[Hard]`
+
+Income is hidden initially. Once revealed, it always exceeds the PMKVY threshold, and the correct action is rejection.
+
+| Parameter | Value |
+|---|---|
+| Profile at reset | age visible, income hidden |
+| Income range | 10,001 to 12,000 |
+| Minimum steps | 4 |
+| Core skill | exact arithmetic boundary reasoning |
+
+### Task 4 — Escalation Dilemma `[Expert]`
+
+The applicant claims to be a student, but PAN verification reveals long-term public-sector employment. The correct response is escalation after verification.
+
+| Parameter | Value |
+|---|---|
+| Profile at reset | complete profile, occupation=`student` |
+| Income range | 8,000 to 20,000 |
+| Minimum steps | 2 |
+| Core skill | contradiction handling and escalation |
+
+### Task 5 — Document Conflict `[Expert+]`
+
+The self-reported age looks near the PMKVY boundary, but Aadhaar reveals a disqualifying official age. The correct response is verified rejection.
+
+| Parameter | Value |
+|---|---|
+| Self-reported age | 33, 34, or 35 |
+| Aadhaar age | always greater than 35 |
+| Income range | 6,001 to 9,000 |
+| Minimum steps | 2 |
+| Core skill | document authority over self-report |
+
+## 🎭 The Distraction Trap
+
+Every episode injects 1 to 3 irrelevant fields into `known_profile`, for example:
+
+- `marital_status`
+- `state_of_residence`
+- `number_of_children`
+- `bank_name`
+
+These look plausibly administrative, but they do **not** affect eligibility. Querying them incurs penalties and lowers the grader score.
+
+This is a deliberate benchmark feature, not cosmetic clutter.
+
+## ⚙️ Key Engineering Decisions
+
+### `threading.Lock` for real request safety
+
+`reset()` and `step()` are synchronous methods invoked from FastAPI handlers. A `threading.Lock` correctly protects the singleton state here.
+
+### Shared-state persistence across HTTP requests
+
+Class-level `_shared_state` ensures the episode is not lost across separate `/step` calls.
+
+### Metadata stripping
+
+Internal control fields are kept for environment logic but stripped before returning observations to the agent.
+
+### Task hardening against exploits
+
+The current environment closes several easy exploit paths:
+
+- Task 1 and Task 2 both block premature approval
+- Task 3 hides income at reset
+- Task 5 randomizes self-reported age
+- wrong escalation is terminal outside the true contradiction case
+
+### Soft-blocks for recoverable protocol errors
+
+Tasks 4 and 5 teach protocol adherence by allowing some mistaken steps to continue with penalties instead of always terminating immediately.
+
+## 📸 Benchmark Outputs and Screenshots
+
+The branch includes a full sample report bundle under [reports/baseline_report](reports/baseline_report) so the README can show exactly what `benchmark_runner.py` and `benchmark_report.py` produce.
+
+### Generated artifact bundle
+
+```text
+reports/baseline_report/
+├── leaderboard.csv
+├── results.json
+├── summary.txt
+├── README.txt
+├── average_scores.png
+├── task_heatmap.png
+├── difficulty_profile.png
+├── efficiency_scatter.png
+├── inference_logs/
+└── test_logs/
 ```
 
-### Development dependencies
+### 1. Leaderboard output
 
-```bash
-pip install -e ".[dev]"
+The top-level CSV output from the sample run is:
+
+| Model | Size | Task1 | Task2 | Task3 | Task4 | Task5 | Average |
+|---|---|---:|---:|---:|---:|---:|---:|
+| mistralai/mistral-nemotron | ~56B | 0.833 | 1.000 | 1.000 | 1.000 | 1.000 | **0.967** |
+| nvidia/llama-3.3-nemotron-super-49b-v1 | 49B | 0.800 | 0.973 | 1.000 | 1.000 | 1.000 | 0.955 |
+| nvidia/llama-3.1-nemotron-51b-instruct | 51B | 0.800 | 0.957 | 1.000 | 1.000 | 1.000 | 0.951 |
+| nvidia/nemotron-3-nano-30b-a3b | 30B | 1.000 | 0.000 | 1.000 | 1.000 | 1.000 | 0.800 |
+| nvidia/nemotron-3-super-120b-a12b | 120B | 1.000 | 0.000 | 1.000 | 1.000 | 1.000 | 0.800 |
+| nvidia/nemotron-mini-4b-instruct | 4B | 0.483 | 0.667 | 0.667 | 0.967 | 0.000 | 0.557 |
+| meta/llama-3.1-8b-instruct | 8B | 0.400 | 0.000 | 0.317 | 0.867 | 1.000 | 0.517 |
+| nvidia/llama-3.1-nemotron-nano-8b-v1 | 8B | 0.283 | 0.303 | 0.000 | 0.333 | 0.000 | 0.184 |
+
+### 2. Summary output
+
+The sample summary file reports:
+
+```text
+OpenEnv scheme_env Benchmark — Baseline Report Summary
+========================================================
+Date generated      : 2026-04-08
+Models evaluated    : 8
+
+Best model          : mistral-nemotron (avg=0.967)
+Worst model         : nemotron-nano-8b (avg=0.184)
+
+Hardest task        : Task 2 (mean=0.487)
+Easiest task        : Task 4 (mean=0.896)
+
+Perfect score (1.0 on all tasks): none
 ```
 
-## Running the Server
+### 3. Average score chart
 
-### With Python directly
+![Average Scores](reports/baseline_report/average_scores.png)
+
+This chart is the high-level leaderboard view and is the quickest way to compare overall capability across models.
+
+### 4. Per-task heatmap
+
+![Task Heatmap](reports/baseline_report/task_heatmap.png)
+
+This view is especially useful for spotting capability cliffs and task-specific failure modes.
+
+### 5. Difficulty profile
+
+![Difficulty Profile](reports/baseline_report/difficulty_profile.png)
+
+This chart summarizes which tasks are easiest or hardest across the evaluated model set.
+
+### 6. Efficiency / protocol-view scatter
+
+![Efficiency Scatter](reports/baseline_report/efficiency_scatter.png)
+
+This view helps interpret whether strong models are also protocol-efficient, not just ultimately correct.
+
+### 7. Raw artifacts included in the bundle
+
+The sample report directory also includes:
+
+- [results.json](reports/baseline_report/results.json)
+- [leaderboard.csv](reports/baseline_report/leaderboard.csv)
+- [summary.txt](reports/baseline_report/summary.txt)
+- [README.txt](reports/baseline_report/README.txt)
+- [inference_logs](reports/baseline_report/inference_logs)
+- [test_logs](reports/baseline_report/test_logs)
+
+That means the README now shows not just plots, but also the exact machine-readable outputs and raw logs the benchmark produces.
+
+## 📊 Baseline Results
+
+Across the included baseline report:
+
+- **best model**: `mistralai/mistral-nemotron` at `0.967`
+- **worst model**: `nvidia/llama-3.1-nemotron-nano-8b-v1` at `0.184`
+- **hardest task**: Task 2
+- **easiest task**: Task 4
+
+### What these results reveal
+
+- **Task 2 is a strong discriminator**: some larger models still fail to commit to the final approval even after collecting the needed fields
+- **Task 5 separates small models sharply**: some understand the contradiction but fail to translate it into a valid schema action
+- **Task 4 is protocol-heavy, not purely reasoning-heavy**: once the contradiction is document-backed, many models can resolve it correctly
+- **Task 1 remains nontrivial**: choosing the optimal scheme instead of the first eligible scheme still trips strong models
+
+## 🛠️ Setup and Running
+
+### Option 1 — Docker
 
 ```bash
-python -m server.app
-```
-
-### With Uvicorn
-
-```bash
-uvicorn server.app:app --host 0.0.0.0 --port 7860
-```
-
-### Health check
-
-```bash
+docker build -t scheme-enrollment-env .
+docker run -p 7860:7860 scheme-enrollment-env
 curl http://localhost:7860/health
 ```
 
-## Running Inference
-
-The inference runner talks to:
-
-- a running local environment server
-- an OpenAI-compatible model endpoint
-
-Example:
+### Option 2 — Local
 
 ```bash
-export ENV_URL=http://localhost:7860
+git clone https://github.com/advikdivekar/rl-agent.git
+cd rl-agent
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+export PYTHONPATH=.
+uvicorn server.app:app --host 0.0.0.0 --port 7860
+```
+
+### With `uv`
+
+```bash
+uv sync
+export PYTHONPATH=.
+uvicorn server.app:app --host 0.0.0.0 --port 7860
+```
+
+### Running inference
+
+Hugging Face Router:
+
+```bash
+export HF_TOKEN=your_hf_token
 export API_BASE_URL=https://router.huggingface.co/v1
 export MODEL_NAME=Qwen/Qwen2.5-7B-Instruct
-export HF_TOKEN=your_token
-export INFERENCE_TEMPERATURE=0.0
-export MAX_TOKENS=1500
+export ENV_URL=http://localhost:7860
 export N_REPEATS=3
-
 python inference.py
 ```
 
-### Provider compatibility notes
-
-[inference.py](inference.py) includes provider normalization logic:
-
-- Hugging Face website URLs are rewritten to `https://router.huggingface.co/v1`
-- deprecated Hugging Face Inference API model URLs are normalized to Router
-- the same code path can be used with Hugging Face Router or NVIDIA NIM
-
-### Example NVIDIA NIM setup
+NVIDIA NIM:
 
 ```bash
-export ENV_URL=http://localhost:7860
+export OPENAI_API_KEY=nvapi-your_nvidia_key
 export API_BASE_URL=https://integrate.api.nvidia.com/v1
-export MODEL_NAME=nvidia/llama-3.1-nemotron-70b-instruct
-export OPENAI_API_KEY=your_nvidia_key
-
+export MODEL_NAME=nvidia/llama-3.3-nemotron-super-49b-v1
+export ENV_URL=http://localhost:7860
 python inference.py
 ```
 
-## Running the Benchmark Suite
-
-[benchmark_runner.py](benchmark_runner.py) runs a configured list of models sequentially.
-
-Sequential execution is intentional because the environment is single-session.
+### Running the benchmark suite
 
 ```bash
 python benchmark_runner.py
 ```
 
-The runner:
+This creates timestamped bundles under:
 
-- waits for the server health check to pass
-- evaluates the configured model list one at a time
-- repeats each task multiple times
-- extracts structured scores from inference logs
-- stores logs, CSV output, manifest JSON, analysis JSON, and text summaries
+```text
+reports/report_<timestamp>/
+```
 
-## Generating Reports
+with CSV, logs, manifests, summaries, and report-ready artifacts.
 
-Use [benchmark_report.py](benchmark_report.py) to build graph-first summaries from a benchmark run.
-
-### From a timestamped run directory
+### Generating visual reports
 
 ```bash
 python benchmark_report.py --run-dir reports/report_<timestamp>
 ```
 
-### From the latest discovered run
+or:
 
 ```bash
 python benchmark_report.py --latest
 ```
 
-### From explicit artifacts
+## 🔧 Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `HF_TOKEN` | unset | Hugging Face token |
+| `OPENAI_API_KEY` | unset | OpenAI-compatible provider key |
+| `API_BASE_URL` | `https://router.huggingface.co/v1` | Model endpoint |
+| `MODEL_NAME` | `Qwen/Qwen2.5-7B-Instruct` | Model identifier |
+| `ENV_URL` | `http://localhost:7860` | Environment server URL |
+| `MAX_TOKENS` | `1500` | Max tokens per model call |
+| `N_REPEATS` | `3` | Episodes per task |
+| `INFERENCE_TEMPERATURE` | `0.0` | Sampling temperature |
+
+## 🧪 Testing
+
+Run the unit tests with:
 
 ```bash
-python benchmark_report.py \
-  --csv reports/report_<timestamp>/leaderboard_<timestamp>.csv \
-  --logs-dir reports/report_<timestamp>/logs_<timestamp>
+export PYTHONPATH=.
+pytest tests/ -v
 ```
 
-## Testing
+Current unit tests cover:
 
-The unit tests focus on the parts of the benchmark that most often regress:
+- PMKVY age and income boundaries
+- PMAY strict ceiling behavior
+- MGNREGS Aadhaar requirement
+- optimal-scheme priority ordering
+- grader score floor and penalty math
 
-- scheme boundary comparisons
-- optimal scheme ordering
-- grader score clamping and penalty math
+The baseline report bundle also includes archived test outputs under [reports/baseline_report/test_logs](reports/baseline_report/test_logs).
 
-Run:
+## ⚠️ Known Limitations
 
-```bash
-pytest tests/
-```
+1. **Single active environment session**: evaluation should be sequential
+2. **Persona randomness introduces variance**: use `N_REPEATS >= 3` for stable comparisons
+3. **PYTHONPATH matters for local runs**: `export PYTHONPATH=.` from repo root
+4. **Strict schema validation**: invalid actions are rejected rather than tolerated
+5. **No built-in model training loop**: this is an environment and benchmarking repo, not a trainer
 
-Covered examples include:
+## ✅ OpenEnv Compliance
 
-- `PMKVY` age and income boundary conditions
-- `PMAY` strict `5999` vs `6000` threshold behavior
-- `MGNREGS` Aadhaar requirements
-- `get_optimal_scheme()` hierarchy correctness
-- `_compute_grader_score()` floor and penalty math
+| Requirement | Status |
+|---|---|
+| `step()` / `reset()` / `state` property | ✅ |
+| Typed `Action` model | ✅ |
+| Typed `Observation` model | ✅ |
+| `openenv.yaml` present | ✅ |
+| `/health` endpoint | ✅ |
+| OpenAI-compatible inference client | ✅ |
+| Root `inference.py` script | ✅ |
+| 5 graded tasks | ✅ |
+| FastAPI runtime | ✅ |
+| Resource declaration in yaml | ✅ |
 
-## Output Artifacts
+## Closing Note
 
-The repo already includes a baseline artifact bundle under [reports/baseline_report](reports/baseline_report).
+This benchmark is strongest when understood as a test of **operational judgment**, not just reasoning accuracy. The agent must be precise, skeptical, protocol-aware, and restrained. That combination is rare in benchmarks and crucial in real administration systems.
 
-Typical generated outputs include:
-
-- `leaderboard.csv`
-- `results.json`
-- `summary.txt`
-- `README.txt`
-- `average_scores.png`
-- `task_heatmap.png`
-- `efficiency_scatter.png`
-- `difficulty_profile.png`
-- `inference_logs/`
-- `test_logs/`
-
-For fresh runs produced by [benchmark_runner.py](benchmark_runner.py), the current expected layout is:
-
-- `reports/report_<timestamp>/leaderboard_<timestamp>.csv`
-- `reports/report_<timestamp>/logs_<timestamp>/`
-- `reports/report_<timestamp>/run_manifest_<timestamp>.json`
-- `reports/report_<timestamp>/analysis_<timestamp>.json`
-- `reports/report_<timestamp>/summary_<timestamp>.txt`
-
-## Design Tradeoffs
-
-### Single-session shared state
-
-The environment prioritizes correctness and simple persistence across HTTP requests over concurrency. This keeps implementation straightforward, but it means evaluation should remain sequential.
-
-### Sanitized observations
-
-The benchmark avoids leaking internal truth flags. That makes the environment more faithful as an evaluation tool, even though it adds some implementation complexity.
-
-### Soft-blocks for recoverable mistakes
-
-Some protocol violations in Tasks 4 and 5 do not instantly end the episode. This gives more nuanced behavioral signal and better reflects operational workflows where an officer can still correct course.
-
-### Narrow benchmark profile, broader future catalog
-
-Current tasks use a sparse four-field profile core:
-
-- `age`
-- `income`
-- `occupation`
-- `has_aadhaar`
-
-But the repo already contains extended scheme metadata for future richer tasks.
-
-## Roadmap
-
-High-value next steps suggested by the current codebase:
-
-1. add end-to-end tests for actual `reset` and `step` trajectories, not just pure helper logic
-2. document the run-manifest and analysis JSON schemas more explicitly
-3. expose a canonical agent-facing observation model instead of sanitizing inline in `_finalize_step()`
-4. add benchmark fixtures for Task 4 and Task 5 recovery paths
-5. expand reporting docs with example interpretation of each chart
-6. consider session-safe state storage if parallel evaluation becomes necessary
-
-## Summary
-
-This repo is a strong benchmark for rule-bound agent behavior. Its most interesting architectural feature is not just the task list, but the combination of:
-
-- partial observability
-- authoritative document verification
-- exact integer thresholds
-- contradiction-aware escalation
-- hidden internal state with sanitized agent views
-
-That combination makes it a useful testbed for evaluating whether a model can act like a careful operator, not just produce plausible language.
+If an AI system can perform well here, it is not merely answering questions. It is behaving like a careful officer.

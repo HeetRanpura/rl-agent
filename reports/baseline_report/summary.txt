@@ -1,0 +1,12 @@
+OpenEnv scheme_env Benchmark — Baseline Report Summary
+========================================================
+Date generated      : 2026-04-08
+Models evaluated    : 8
+
+Best model          : mistral-nemotron (avg=0.967)
+Worst model         : nemotron-nano-8b (avg=0.184)
+
+Hardest task        : Task 2 (mean=0.487)
+Easiest task        : Task 4 (mean=0.896)
+
+Perfect score (1.0 on all tasks): none
