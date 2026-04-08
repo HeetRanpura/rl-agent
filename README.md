@@ -427,7 +427,7 @@ PMAY > MGNREGS > PMKVY
 
 The repo also defines future-facing extended schemes in [server/schemes.py](server/schemes.py), but current benchmark tasks are built around the core three.
 
-## 🧠 The 5 Tasks
+##  The 5 Tasks
 
 ### Task 1 — Scheme Discovery
 
@@ -485,7 +485,7 @@ The self-reported age looks near the PMKVY boundary, but Aadhaar reveals a disqu
 | Minimum steps | 2 |
 | Core skill | document authority over self-report |
 
-## 🎭 The Distraction Trap
+##  The Distraction Trap
 
 Every episode injects 1 to 3 irrelevant fields into `known_profile`, for example:
 
@@ -498,7 +498,7 @@ These look plausibly administrative, but they do **not** affect eligibility. Que
 
 This is a deliberate benchmark feature, not cosmetic clutter.
 
-## 📸 Benchmark Outputs and Screenshots
+##  Benchmark Results
 
 Running the evaluation flow produces benchmark outputs under `reports/`. In practice, the most important generated directories are:
 
@@ -588,7 +588,7 @@ The generated output bundle also includes:
 
 That means the README now shows not just plots, but also the exact machine-readable outputs and raw logs the benchmark produces.
 
-## 📊 Baseline Results
+##  Baseline Results
 
 Across the included baseline report:
 
@@ -604,7 +604,7 @@ Across the included baseline report:
 - **Task 4 is protocol-heavy, not purely reasoning-heavy**: once the contradiction is document-backed, many models can resolve it correctly
 - **Task 1 remains nontrivial**: choosing the optimal scheme instead of the first eligible scheme still trips strong models
 
-## 🛠️ Setup and Running
+##  Setup and Running
 
 ### Option 1 — Docker
 
