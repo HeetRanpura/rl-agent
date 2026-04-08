@@ -16,9 +16,12 @@ from .models import Action, Observation
 # Maximum steps per episode — generous enough for careful agents but not infinite
 MAX_STEPS = 20
 
-# Keep non-terminal shaping flat so agents optimize for correct terminal
-# outcomes instead of reward-farming with unnecessary information gathering.
+# Correct information-gathering steps cost nothing so agents are not penalized
+# for thoroughness — only for wasted queries tracked via the grader score.
 VALID_STEP_PENALTY = 0.0
+
+# Small enough that 20 noise queries (-2.0 total) still leaves terminal rewards
+# dominant, but large enough to discourage lazy probing across a 20-step episode.
 INVALID_STEP_PENALTY = -0.10
 
 # Noise fields injected into every profile — querying them wastes steps and costs reward
@@ -57,8 +60,11 @@ TASK5_BOUNDARY_SCHEMES = ["PMKVY"]  # schemes whose upper age bound is tested
 def _inject_noise(profile: dict) -> dict:
     """
     Randomly add 1-3 irrelevant fields to the profile.
-    These are traps — querying them costs -1.0 and increments noise_queries.
-    Good agents ignore them entirely.
+
+    Noise injection tests contextual filtering — a key real-world CSC operator
+    skill. Agents that query irrelevant fields are penalized via noise_queries,
+    incentivizing focus on the four eligibility-relevant fields only.
+    Good agents read the profile, recognise the noise fields, and ignore them.
     """
     chosen = random.sample(NOISE_FIELDS, k=random.randint(1, 3))
     for field in chosen:
@@ -79,10 +85,11 @@ def generate_dynamic_persona(task_id: int) -> dict:
 
     if task_id == 1:
         # ── TASK 1: Scheme Discovery ──────────────────────────────────────────
-        # Profile is complete. Agent must determine the optimal scheme.
-        # HARDENING vs original: when both PMKVY and PMAY are eligible,
-        # PMAY is optimal (higher benefit value: Rs 1.2L vs PMKVY's Rs 8000).
-        # Agents that blindly approve PMKVY without checking PMAY get 0.5.
+        # Models a routine desk assessment: profile is complete, agent must apply
+        # benefit-value hierarchy to pick the optimal scheme when multiple apply.
+        # Age 18-35 and income 1000-9999 span the PMKVY range; the PMAY overlap
+        # window (age 21-35, income <6000) lets ~40% of personas be PMAY-optimal,
+        # testing whether the agent recalls the PMAY > PMKVY benefit priority.
         age    = random.randint(18, 35)
         income = random.randint(1000, 9999)
         occ    = random.choice(["mason", "carpenter"])
@@ -108,10 +115,10 @@ def generate_dynamic_persona(task_id: int) -> dict:
 
     elif task_id == 2:
         # ── TASK 2: Missing Data ──────────────────────────────────────────────
-        # Occupation and Aadhaar status are hidden. Agent must ask for both
-        # before making a terminal decision.
-        # HARDENING vs original: missing_keys order is randomised so agents
-        # cannot hardcode "ask occupation first, then has_aadhaar".
+        # Models incomplete paperwork at intake: both occupation and Aadhaar
+        # status are withheld until the agent explicitly asks for them.
+        # Randomised missing_keys order prevents agents from hardcoding a fixed
+        # "ask occupation first, then has_aadhaar" shortcut across episodes.
         missing = random.sample(["occupation", "has_aadhaar"], k=2)
 
         return {
@@ -126,10 +133,11 @@ def generate_dynamic_persona(task_id: int) -> dict:
 
     elif task_id == 3:
         # ── TASK 3: Boundary Fraud Detection ─────────────────────────────────
-        # Income is 1-2000 rupees above the PMKVY threshold.
-        # HARDENING vs original: notification NO LONGER states the income,
-        # the threshold, or what to do. Agent must read known_profile and
-        # recall the PMKVY rule from its own training/system prompt.
+        # Models a near-miss income case: applicant looks eligible on age and
+        # occupation but income is 1–2000 Rs above the PMKVY ceiling.
+        # Income range 10001–12000 ensures the overage is always present but
+        # varies in magnitude, exercising both tight-boundary and clear-miss logic.
+        # Age 22-34 avoids the PMAY age window to keep PMKVY the only scheme in play.
         age    = random.randint(22, 34)
         income = random.randint(10001, 12000)
         occ    = random.choice(["mason", "carpenter"])
@@ -146,8 +154,11 @@ def generate_dynamic_persona(task_id: int) -> dict:
 
     elif task_id == 4:
         # ── TASK 4: Escalation Dilemma ────────────────────────────────────────
-        # Applicant claims to be a student but income/employer data from PAN
-        # reveals formal government employment.
+        # Models a fraudulent application: the stated occupation "student" is
+        # contradicted by PAN card evidence of active government employment.
+        # The correct resolution is escalation, not approval or rejection.
+        # Income 8000–20000 is suspiciously high for a student, nudging the agent
+        # to request the PAN card before making any terminal decision.
         age      = random.randint(22, 45)
         income   = random.randint(8000, 20000)   # suspiciously high for a student
         employer = random.choice(CONTRADICTION_EMPLOYERS)
@@ -165,9 +176,12 @@ def generate_dynamic_persona(task_id: int) -> dict:
 
     elif task_id == 5:
         # ── TASK 5: Document Conflict ─────────────────────────────────────────
-        # self_reported_age drawn from [33,34,35] — at or near PMKVY upper boundary.
-        # aadhaar_age always exceeds 35, so the conflict always disqualifies from PMKVY.
-        # max(36, ...) ensures ages 33/34 still produce a disqualifying aadhaar_age.
+        # Models an age-manipulation attempt: applicant self-reports an age at
+        # or near the PMKVY upper boundary (33–35) but Aadhaar always reveals
+        # a true age > 35, disqualifying them. max(36, ...) guarantees a
+        # disqualifying Aadhaar age even when self_reported_age is 33 or 34.
+        # Income 6001–9000 sits above the PMAY ceiling (5999), making PMKVY the
+        # only scheme in play and ensuring the age conflict is the deciding factor.
         self_reported_age = random.choice([33, 34, 35])
         aadhaar_age       = max(36, self_reported_age + random.randint(1, 3))
 
@@ -197,11 +211,17 @@ def _make_fresh_obs(task: int, persona: dict) -> Observation:
     """
     Build the starting Observation for the given task.
 
-    HARDENING PRINCIPLES applied here:
-    - Task 3: notification gives NO numerical hints — just says "apply rules carefully"
-    - Task 4: notification gives NO SYSTEM ALERT — just flags occupation/income as unusual
-    - Task 5: notification gives NO hint about the age conflict — shows surface profile only
-    All tasks: noise fields injected into profile from step zero.
+    Information hiding is deliberate: agents must earn hidden facts through
+    ask_question and request_document actions rather than reading them from the
+    initial state. Upfront fields are limited to what a real officer would see
+    on a printed intake form; sensitive verifiable data (employment, true age)
+    is only released when the correct document is requested.
+
+    Hardening principles applied here:
+    - Task 3: notification gives NO numerical hints — agent must recall rules.
+    - Task 4: notification gives NO system alert — just flags the anomaly.
+    - Task 5: notification gives NO hint about the age conflict.
+    - All tasks: noise fields injected into profile from step zero.
     """
 
     # Start with age only. Task 3 deliberately hides income so agents cannot
@@ -319,18 +339,21 @@ def _compute_grader_score(
     document_verified: bool = False,
 ) -> float:
     """
-    Convert a terminal outcome into a continuous score between 0.0 and 1.0.
+    Convert a terminal outcome into a continuous score in [0.30, 1.0].
 
-    Penalty model:
-      noise_queries      → -0.08 each
-      redundant_queries  → -0.05 each
-      wasted steps       → -0.04 each (Task 2 only)
+    Penalty magnitudes are calibrated so a near-perfect agent (1-2 wasted
+    queries, correct terminal decision) still scores > 0.80:
 
-    Bonus model:
-      document_verified  → +0.05 (Tasks 4/5)
+      noise_queries     → -0.08 each  (strongest: wasted a step AND revealed nothing)
+      redundant_queries → -0.05 each  (weaker: wastes a step but is a lesser mistake)
+      wasted steps      → -0.04 each  (Task 2 only: penalises excess gather steps
+                                       beyond the theoretical minimum of missing_keys+1)
 
-    Incorrect terminal outcomes always return 0.0.
-    Correct outcomes clamped to [0.30, 1.0].
+    Bonus:
+      document_verified → +0.05  (rewards proactive document verification on Tasks 4/5)
+
+    Floor at 0.30 ensures a correct-but-sloppy agent still outscores a wrong one (0.0).
+    Incorrect terminal outcomes short-circuit and return 0.0 immediately.
     """
     if base_score <= 0.0:
         return 0.0
@@ -338,6 +361,8 @@ def _compute_grader_score(
     penalty = (noise_queries * 0.08) + (redundant_queries * 0.05)
 
     if task == 2 and missing_keys_total > 0:
+        # Minimum viable episode for Task 2: ask for each missing field (missing_keys_total steps)
+        # plus one terminal action. Any steps beyond that are considered wasted.
         min_steps = missing_keys_total + 1
         wasted    = max(0, step_count - min_steps)
         penalty  += wasted * 0.04
@@ -364,9 +389,12 @@ class SchemeEnvEnvironment(Environment):
       Task 5 — Document Conflict:      self-reported vs Aadhaar age mismatch
     """
 
-    # FIX D3: asyncio.Lock guards shared state — prevents concurrent request corruption
     SUPPORTS_CONCURRENT_SESSIONS = False
     _shared_state = {}
+
+    # threading.Lock because step() and reset() are synchronous methods called
+    # from FastAPI's async handlers. asyncio.Lock cannot be acquired from a
+    # synchronous context, and would deadlock under concurrent HTTP requests.
     _state_lock   = threading.Lock()
 
     def __init__(self):
@@ -415,11 +443,18 @@ class SchemeEnvEnvironment(Environment):
     def step(self, action: Action, timeout_s=None, **kwargs) -> Observation:
         """
         Execute one agent action and return the updated observation.
+
+        Action dispatch uses a flat if/elif chain rather than a dispatch table
+        so that each action type's task-specific branching stays co-located and
+        readable. The lock wraps the entire body so that step_count, persona, and
+        obs are all updated atomically — partial reads from concurrent requests
+        are impossible without it.
         """
         with SchemeEnvEnvironment._state_lock:
             self._state.step_count += 1
 
-            # FIX D4: deepcopy prevents aliased mutation of shared state
+            # FIX D4: deepcopy prevents aliased mutation of shared state —
+            # modifying obs here must not affect self._obs until _finalize_step.
             obs          = copy.deepcopy(self._obs)
             current_task = self._task
             persona      = self._persona
@@ -528,6 +563,8 @@ class SchemeEnvEnvironment(Environment):
                 scheme = (action.value or "").strip()
 
                 if current_task == 4:
+                    # Soft-block: episode continues so the agent can still recover and escalate.
+                    # done=False is intentional — premature approval is bad but not yet irreversible.
                     if not obs.metadata.get("pan_verified", False):
                         obs.notification = (
                             "PROTOCOL VIOLATION: Do not approve this case before verifying "
@@ -552,6 +589,8 @@ class SchemeEnvEnvironment(Environment):
                     obs.metadata["grader_score"] = score
                     return self._finalize_step(obs)
 
+                # Soft-block: agent hasn't verified Aadhaar yet, so the episode stays open.
+                # Heavier penalty (-1.5) than a noise query to reflect a protocol breach.
                 if current_task == 5 and not obs.metadata.get("aadhaar_verified", False):
                     obs.notification = (
                         "PROTOCOL VIOLATION: You must verify the Aadhaar card before approving "
@@ -608,6 +647,10 @@ class SchemeEnvEnvironment(Environment):
                     obs.metadata["grader_score"] = score
                     return self._finalize_step(obs)
 
+                # Both Tasks 1 and 2 share this guard because both start with hidden fields.
+                # Task 1 hides occupation and has_aadhaar; Task 2 hides a randomised pair.
+                # An agent that approves without collecting all fields cannot have applied
+                # the eligibility rules correctly, so the outcome is always terminal + zero score.
                 if current_task in (1, 2) and len(obs.missing_data) > 0:
                     score = 0.0
                     obs.notification = (
@@ -669,6 +712,8 @@ class SchemeEnvEnvironment(Environment):
             elif action.action_type == "reject_applicant":
 
                 if current_task == 4:
+                    # Soft-block before PAN is verified: rejection without evidence is premature
+                    # but the agent can still recover by requesting the document and escalating.
                     if not obs.metadata.get("pan_verified", False):
                         obs.notification = (
                             "PREMATURE ADJUDICATION: Review documentary evidence before rejecting. "
@@ -691,6 +736,8 @@ class SchemeEnvEnvironment(Environment):
                         obs.metadata["grader_score"] = score
 
                 elif current_task == 5:
+                    # Soft-block: the agent must verify Aadhaar before rejecting on age grounds —
+                    # self-reported age alone is not an authoritative basis for rejection.
                     if not obs.metadata.get("aadhaar_verified", False):
                         obs.notification = (
                             "PROTOCOL VIOLATION: You must verify the Aadhaar card before "
@@ -768,6 +815,8 @@ class SchemeEnvEnvironment(Environment):
 
                 if current_task == 4:
                     verified = obs.metadata.get("pan_verified", False)
+                    # Soft-block: escalating without documentary evidence is premature.
+                    # The agent must first request the PAN card to substantiate the conflict.
                     if not verified:
                         obs.notification = (
                             "INSUFFICIENT BASIS FOR ESCALATION: First request the PAN card to "
@@ -815,9 +864,13 @@ class SchemeEnvEnvironment(Environment):
 
     def _finalize_step(self, obs: Observation) -> Observation:
         """
-        Enforce step limit and persist state.
-        Called at the end of every step regardless of outcome.
-        FIX D5: changed >= to > to fix off-by-one that overwrote step 19 actions.
+        Enforce the step limit, persist state, and sanitise the observation
+        returned to the agent.
+
+        Called unconditionally at the end of every step path so that timeout
+        enforcement, shared-state persistence, and metadata stripping are never
+        accidentally bypassed by an early return in step().
+        FIX D5: changed > to >= to fix off-by-one that overwrote step 19 actions.
         """
         if self._state.step_count >= MAX_STEPS and not obs.done:
             obs.is_terminated            = True
@@ -827,12 +880,14 @@ class SchemeEnvEnvironment(Environment):
             obs.grader_score             = 0.0
             obs.metadata["grader_score"] = 0.0
 
+        # self._obs keeps the full metadata so subsequent step() calls can read
+        # pan_verified, aadhaar_verified, grader_score, etc. for branching logic.
         self._obs = obs
         self._save_shared()
 
-        # Strip internal tracking fields before returning to agent.
-        # self._obs retains full metadata for step logic on subsequent steps.
-        # The agent only sees noise/redundant/relevant query counts.
+        # Agents receive only the three query-count fields, not internal state.
+        # Exposing pan_verified or grader_score early would leak the answer and
+        # allow agents to game the benchmark rather than reason about the task.
         import copy
         agent_obs = copy.deepcopy(obs)
         agent_obs.metadata = {

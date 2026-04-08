@@ -1,6 +1,13 @@
 # Scheme eligibility rules, required documents, and metadata for all supported welfare schemes.
-# Each scheme is a dictionary with deterministic integer-based eligibility rules
-# so the grader can evaluate agent decisions without any ambiguity.
+# Each scheme uses deterministic integer-based eligibility rules so the grader can evaluate
+# agent decisions without floating-point ambiguity or rounding edge cases.
+#
+# Two tiers:
+#   BENCHMARK SCHEMES (PMKVY, MGNREGS, PMAY) — actively tested in Tasks 1–5 using the
+#     four-field sparse profile (age, income, occupation, has_aadhaar).
+#   EXTENDED SCHEMES (PM_SYM, AYUSHMAN_BHARAT, E_SHRAM, NFSA, PMMVY) — defined for
+#     future richer-profile tasks; unreachable from any current benchmark task because
+#     they require additional profile fields not present in sparse profiles.
 
 from typing import Dict, Any, List, Optional
 
@@ -54,14 +61,16 @@ SCHEMES: Dict[str, Dict[str, Any]] = {
     },
 
     # ── EXTENDED SCHEMES ──────────────────────────────────────────────────────
-    # These 5 schemes are defined for future tasks using enriched profiles.
-    # They are NOT reachable from benchmark tasks 1–5 which use sparse
-    # 4-field profiles (age, income, occupation, has_aadhaar).
-    # get_eligible_schemes() will skip these unless the required extra
-    # profile fields are explicitly provided by a future task.
+    # Defined here for schema completeness and future task development.
+    # Each extended scheme requires at least one profile field beyond the
+    # benchmark four (age, income, occupation, has_aadhaar). Because current
+    # benchmark tasks never populate those extra fields, get_eligible_schemes()
+    # will silently skip these — the missing field evaluates as absent/False,
+    # so the scheme's extra guard clause is never satisfied.
 
-    # NOTE: PM_SYM requires worker_type, is_epfo_member, is_esic_member in profile.
-    # Not reachable from benchmark tasks 1–5.
+    # NOTE: PM_SYM requires worker_type, is_epfo_member, is_esic_member. Without
+    # these three fields in the profile the scheme is silently skipped by the
+    # eligibility checker — it will never appear in Tasks 1–5 results.
     "PM_SYM": {
         # Pradhan Mantri Shram Yogi Maan-dhan — pension for unorganised workers
         "full_name":    "Pradhan Mantri Shram Yogi Maan-dhan",
@@ -79,8 +88,9 @@ SCHEMES: Dict[str, Dict[str, Any]] = {
         "required_docs": ["aadhaar", "bank_passbook", "mobile_number"],
     },
 
-    # NOTE: AYUSHMAN_BHARAT requires not_govt_employee field in profile.
-    # Not reachable from benchmark tasks 1–5.
+    # NOTE: AYUSHMAN_BHARAT requires is_govt_employee=False in the profile.
+    # Absent from benchmark profiles, so the not_govt_employee guard is never
+    # evaluated and the scheme is always skipped in Tasks 1–5.
     "AYUSHMAN_BHARAT": {
         # Ayushman Bharat PM-JAY — health insurance for low-income families
         "full_name":    "Ayushman Bharat Pradhan Mantri Jan Arogya Yojana",
@@ -96,8 +106,9 @@ SCHEMES: Dict[str, Dict[str, Any]] = {
         "required_docs": ["aadhaar", "ration_card"],
     },
 
-    # NOTE: E_SHRAM requires worker_type, is_epfo_member, is_esic_member, is_nps_subscriber.
-    # Not reachable from benchmark tasks 1–5.
+    # NOTE: E_SHRAM requires worker_type, is_epfo_member, is_esic_member, and
+    # is_nps_subscriber. All four are absent from benchmark profiles, making
+    # this scheme unreachable across Tasks 1–5.
     "E_SHRAM": {
         # e-Shram Portal — national database registration for unorganised workers
         "full_name":    "e-Shram Portal Registration",
@@ -116,8 +127,8 @@ SCHEMES: Dict[str, Dict[str, Any]] = {
         "required_docs": ["aadhaar", "mobile_number", "bank_passbook"],
     },
 
-    # NOTE: NFSA requires is_income_tax_payer field in profile.
-    # Not reachable from benchmark tasks 1–5.
+    # NOTE: NFSA requires is_income_tax_payer=False. This field is never
+    # populated in benchmark profiles, so the scheme is always skipped.
     "NFSA": {
         # National Food Security Act — subsidised food grains through ration card
         "full_name":    "National Food Security Act — Ration Card",
@@ -133,8 +144,8 @@ SCHEMES: Dict[str, Dict[str, Any]] = {
         "required_docs": ["aadhaar", "address_proof", "family_photo"],
     },
 
-    # NOTE: PMMVY requires gender=female, is_pregnant, first_child, has_bank_account.
-    # Not reachable from benchmark tasks 1–5.
+    # NOTE: PMMVY requires gender=female, is_pregnant=True, first_child=True, and
+    # has_bank_account=True. None of these are in benchmark profiles.
     "PMMVY": {
         # Pradhan Mantri Matru Vandana Yojana — maternity benefit for first child
         "full_name":    "Pradhan Mantri Matru Vandana Yojana",
@@ -157,11 +168,19 @@ SCHEMES: Dict[str, Dict[str, Any]] = {
 
 def get_eligible_schemes(profile: dict) -> list:
     """
-    Evaluate a complete applicant profile against all schemes and return
-    a list of scheme keys the applicant qualifies for.
-    All comparisons use strict integer arithmetic — no rounding or approximation.
-    Extended schemes (PM_SYM, AYUSHMAN_BHARAT, E_SHRAM, NFSA, PMMVY) will only
-    match if the required extra fields are present in the profile.
+    Evaluate an applicant profile against all schemes and return the list of
+    qualifying scheme keys.
+
+    Strict integer arithmetic is mandatory: income=9999 qualifies for PMKVY,
+    income=10000 does not. Floating-point comparisons are explicitly forbidden
+    here because eligibility boundaries in Indian welfare schemes are defined
+    in whole rupees and any rounding would introduce incorrect edge-case outcomes.
+
+    Extended schemes are effectively unreachable from benchmark profiles because
+    their extra guard clauses (not_epfo, gender, is_pregnant, etc.) are only
+    evaluated when the relevant field is present — absent fields are treated as
+    non-disqualifying, but the scheme still won't match because the positive
+    requirements (worker_type, gender, etc.) won't be satisfied either.
     """
     eligible = []
 
@@ -220,12 +239,22 @@ def get_eligible_schemes(profile: dict) -> list:
 def get_optimal_scheme(profile: dict) -> Optional[str]:
     """
     Return the single most beneficial scheme for this applicant profile.
-    Priority order: PMAY > MGNREGS > PMKVY > PM_SYM > AYUSHMAN_BHARAT > E_SHRAM > NFSA > PMMVY.
-    Returns None if the applicant is not eligible for any scheme.
+
+    Priority order (highest financial benefit first):
+      PMAY (Rs 1.2 lakh grant) > MGNREGS (100 days wages) > PMKVY (Rs 8,000 stipend)
+      > PM_SYM > AYUSHMAN_BHARAT > E_SHRAM > NFSA > PMMVY
+
+    PMAY outranks MGNREGS because the housing grant is a one-time capital transfer
+    whereas MGNREGS is conditional on daily attendance. PMKVY ranks below both
+    because the Rs 8,000 stipend is the lowest direct cash value among the three
+    benchmark schemes. This ordering is embedded in the agent's system prompt so
+    correct agents should reproduce it without needing to be told here.
+
+    Returns None if the applicant qualifies for no scheme.
     """
     eligible = get_eligible_schemes(profile)
 
-    # Priority order matches system prompt benefit hierarchy
+    # Priority order matches the benefit hierarchy in the agent system prompt.
     priority = ["PMAY", "MGNREGS", "PMKVY", "PM_SYM",
                 "AYUSHMAN_BHARAT", "E_SHRAM", "NFSA", "PMMVY"]
 
