@@ -4,11 +4,20 @@ from openenv.core.env_server.interfaces import Observation as BaseObservation, A
 
 
 class Action(BaseAction):
-    # The type of action the agent wants to take — must be one of the 5 valid action types
+    """
+    Structured action sent by the agent to the environment each step.
+
+    Strict validation (via model_validator) is critical for RL environment
+    integrity: an agent that submits a malformed action_type or an illegal
+    value would silently receive a neutral reward without the validator,
+    making it impossible to distinguish reasoning failures from API glitches.
+    The validator surfaces these as hard errors so the inference loop can log
+    and handle them explicitly.
+    """
+
     action_type: Literal["ask_question", "request_document", "approve_scheme", "reject_applicant", "escalate"] = Field(
         description="Must be one of: ask_question, request_document, approve_scheme, reject_applicant, escalate"
     )
-    # The argument for the action — field name, document name, scheme name, or rejection reason
     value: Optional[str] = Field(
         None,
         description=(
@@ -71,11 +80,24 @@ class Observation(BaseObservation):
     # Continuous grader score between 0.0 and 1.0 — set only when episode terminates
     grader_score: Optional[float] = Field(None)
 
-    # Internal episode tracking — noise query count, redundant query count, task id
+    # Internal tracking — agents only ever receive noise_queries, redundant_queries,
+    # and relevant_queries from this dict. All other fields (pan_verified,
+    # aadhaar_verified, grader_score, task_label) are stripped in _finalize_step
+    # before the observation is returned, preventing benchmark leakage.
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentObservation(BaseObservation):
+    """
+    Stripped-down observation type intended for future use as the canonical
+    agent-facing response model.
+
+    Currently unused in the main server flow — metadata stripping is performed
+    inline in _finalize_step() by deep-copying the full Observation and
+    replacing its metadata dict. AgentObservation is retained here as a
+    forward-compatible schema so future refactors can switch the HTTP response
+    type without redesigning the field layout.
+    """
     known_profile: Dict[str, Any] = Field(default_factory=dict)
     missing_data: List[str] = Field(default_factory=list)
     notification: Optional[str] = Field(None)
