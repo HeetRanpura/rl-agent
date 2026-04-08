@@ -37,6 +37,7 @@ ENV_URL      = os.getenv("ENV_URL", "http://localhost:7860")
 
 MAX_CONCURRENT  = 1   # singleton environment — must stay 1
 TIMEOUT_SECONDS = 600
+N_REPEATS       = 3   # episodes per task for score averaging
 
 # ── model suite across capability tiers ──────────────────────────────────────
 MODELS_TO_TEST = [
@@ -95,6 +96,19 @@ def _wait_for_server(url: str, retries: int = 12, delay: int = 5) -> None:
 # SCORE EXTRACTION
 # =========================================================
 
+def extract_std_scores(output_text: str) -> dict:
+    """Extract per-task std from STD_JSON lines written by inference.py."""
+    stds = {"Task 1": 0.0, "Task 2": 0.0, "Task 3": 0.0, "Task 4": 0.0, "Task 5": 0.0}
+    for line in output_text.splitlines():
+        if line.startswith("STD_JSON "):
+            try:
+                data = json.loads(line[len("STD_JSON "):])
+                stds[f"Task {data['task']}"] = float(data["std"])
+            except Exception:
+                pass
+    return stds
+
+
 def extract_scores(output_text: str) -> dict:
     scores = {
         "Task 1": 0.0, "Task 2": 0.0, "Task 3": 0.0,
@@ -130,26 +144,35 @@ def extract_scores(output_text: str) -> dict:
     task_scores = [scores[f"Task {i}"] for i in range(1, 6)]
     scores["Average"] = round(sum(task_scores) / 5, 4)
 
-    # Extract step counts per task
-    step_counts = {}
-    for match in re.finditer(
-        r"END.*?steps=(\d+).*?score=([0-9.]+)", output_text
-    ):
-        pass  # step count extraction handled in per-run analysis
-
     return scores
 
 
 def extract_steps(output_text: str) -> dict:
-    """Extract step count per task from [END] log lines."""
+    """
+    Extract step count per task from [END] log lines, labelled by the
+    most recent [START] task= field.  Robust to crashes or retries:
+    if two [END] lines appear for the same task the last one wins.
+    """
+    task_name_to_num = {
+        "scheme_discovery":  1,
+        "missing_data":      2,
+        "boundary_fraud":    3,
+        "escalation_dilemma": 4,
+        "document_conflict": 5,
+    }
     steps = {}
-    task_idx = 0
+    current_task_name = None
     for line in output_text.splitlines():
-        if line.startswith("[END]"):
-            task_idx += 1
+        if line.startswith("[START]"):
+            m = re.search(r"task=(\S+)", line)
+            if m:
+                current_task_name = m.group(1)
+        elif line.startswith("[END]") and current_task_name is not None:
             m = re.search(r"steps=(\d+)", line)
-            if m and task_idx <= 5:
-                steps[f"Task {task_idx}"] = int(m.group(1))
+            if m:
+                task_num = task_name_to_num.get(current_task_name)
+                if task_num is not None:
+                    steps[f"Task {task_num}"] = int(m.group(1))
     return steps
 
 
@@ -198,7 +221,7 @@ def detect_run_status(output_text: str, stderr_text: str) -> Tuple[str, Optional
 # PER-RUN ANALYSIS
 # =========================================================
 
-def analyze_single_run(model: str, scores: dict, steps: dict,
+def analyze_single_run(model: str, scores: dict, std_scores: dict, steps: dict,
                         negative_steps: int, status: str) -> dict:
     """
     After each model run, compute diagnostic signals.
@@ -236,6 +259,7 @@ def analyze_single_run(model: str, scores: dict, steps: dict,
         "status":          status,
         "average":         avg,
         "task_scores":     {f"Task {i}": task_scores[i-1] for i in range(1, 6)},
+        "std_scores":      {f"Task {i}": std_scores.get(f"Task {i}", 0.0) for i in range(1, 6)},
         "step_counts":     steps,
         "total_steps":     total_steps,
         "negative_steps":  negative_steps,
@@ -263,8 +287,9 @@ def _print_run_analysis(a: dict) -> None:
     print(f"  Total steps    : {a['total_steps']}  negative reward steps: {a['negative_steps']}", flush=True)
     print(f"  Binary behavior: {'YES — scoring 0 or 1 only, no graded signal' if a['binary_behavior'] else 'NO — graded scores present (good)'}", flush=True)
     for t, s in a['task_scores'].items():
+        std = a.get('std_scores', {}).get(t, 0.0)
         bar = "█" * int(s * 20)
-        print(f"  {t}: {s:.3f} {bar}", flush=True)
+        print(f"  {t}: {s:.3f} ± {std:.3f} {bar}", flush=True)
     if a['exploit_flags']:
         print(f"\n  ⚠ EXPLOIT FLAGS:", flush=True)
         for flag in a['exploit_flags']:
@@ -447,6 +472,7 @@ async def run_model(model: str, idx: int, total: int) -> dict:
         "HF_TOKEN":      API_TOKEN,
         "OPENAI_API_KEY": API_TOKEN,
         "ENV_URL":       ENV_URL,
+        "N_REPEATS":     str(N_REPEATS),
     })
 
     start_time = time.time()
@@ -474,9 +500,10 @@ async def run_model(model: str, idx: int, total: int) -> dict:
         if proc.returncode == 0:
             run_status, error_kind = detect_run_status(stdout, stderr)
             scores         = extract_scores(stdout)
+            std_scores     = extract_std_scores(stdout)
             steps          = extract_steps(stdout)
             negative_steps = extract_negative_steps(stdout)
-            analysis       = analyze_single_run(model, scores, steps, negative_steps, run_status)
+            analysis       = analyze_single_run(model, scores, std_scores, steps, negative_steps, run_status)
 
             if run_status == "Completed":
                 print(f"[RUNNER] ({idx}/{total}) Done in {elapsed}s — avg: {scores['Average']:.3f}", flush=True)
@@ -498,7 +525,7 @@ async def run_model(model: str, idx: int, total: int) -> dict:
             }
         else:
             print(f"[RUNNER] ({idx}/{total}) ERROR — return code {proc.returncode}", flush=True)
-            analysis = analyze_single_run(model, {}, {}, 0, "Error")
+            analysis = analyze_single_run(model, {}, {}, {}, 0, "Error")
             return {
                 "model": model, "status": "Error", "elapsed_s": elapsed,
                 "t1": 0, "t2": 0, "t3": 0, "t4": 0, "t5": 0, "avg": 0,
@@ -509,7 +536,7 @@ async def run_model(model: str, idx: int, total: int) -> dict:
         proc.kill()
         elapsed = round(time.time() - start_time, 1)
         print(f"[RUNNER] ({idx}/{total}) TIMEOUT after {elapsed}s", flush=True)
-        analysis = analyze_single_run(model, {}, {}, 0, "Timeout")
+        analysis = analyze_single_run(model, {}, {}, {}, 0, "Timeout")
         return {
             "model": model, "status": "Timeout", "elapsed_s": elapsed,
             "t1": 0, "t2": 0, "t3": 0, "t4": 0, "t5": 0, "avg": 0,

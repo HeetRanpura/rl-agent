@@ -1,8 +1,7 @@
 import uvicorn
 from openenv.core.env_server import create_app
-from models import Action, Observation
+from .models import Action, Observation
 from server.scheme_env_environment import SchemeEnvEnvironment
-from server.schemes import SCHEMES
 
 app = create_app(
     SchemeEnvEnvironment,

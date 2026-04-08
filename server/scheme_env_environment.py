@@ -1,13 +1,13 @@
-import asyncio
 import copy
 import random
+import threading
 import math
 from uuid import uuid4
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import State
 
 from .schemes import SCHEMES
-from models import Action, Observation
+from .models import Action, Observation
 
 # =========================================================
 # ENVIRONMENT CONFIGURATION
@@ -165,13 +165,11 @@ def generate_dynamic_persona(task_id: int) -> dict:
 
     elif task_id == 5:
         # ── TASK 5: Document Conflict ─────────────────────────────────────────
-        # FIX D2: Age conflict is now randomised, not hardcoded.
-        # self_reported_age is drawn from the boundary of PMKVY's upper limit (35).
-        # aadhaar_age is self_reported + 1-3, so it always disqualifies from PMKVY.
-        # This eliminates the memorisation exploit where every Task 5 episode
-        # was identical (age=35, aadhaar=36).
-        self_reported_age = 35  # always at PMKVY upper boundary
-        aadhaar_age       = self_reported_age + random.randint(1, 3)  # 36, 37, or 38
+        # self_reported_age drawn from [33,34,35] — at or near PMKVY upper boundary.
+        # aadhaar_age always exceeds 35, so the conflict always disqualifies from PMKVY.
+        # max(36, ...) ensures ages 33/34 still produce a disqualifying aadhaar_age.
+        self_reported_age = random.choice([33, 34, 35])
+        aadhaar_age       = max(36, self_reported_age + random.randint(1, 3))
 
         income = random.randint(6001, 9000)   # above PMAY cap, below PMKVY income cap
 
@@ -206,11 +204,14 @@ def _make_fresh_obs(task: int, persona: dict) -> Observation:
     All tasks: noise fields injected into profile from step zero.
     """
 
-    # Start with the core eligibility-relevant fields
+    # Start with age only. Task 3 deliberately hides income so agents cannot
+    # zero-step reject without first collecting the boundary-relevant field.
+    # Tasks 1, 2, 4, 5: income is revealed upfront (handled below).
     profile = {
-        "age":    persona["age"],
-        "income": persona["income"],
+        "age": persona["age"],
     }
+    if task != 3:
+        profile["income"] = persona["income"]
 
     # EPISODE STRUCTURE DESIGN:
     # Tasks 4 and 5 reveal occupation upfront because the contradiction/conflict
@@ -250,12 +251,12 @@ def _make_fresh_obs(task: int, persona: dict) -> Observation:
     elif task == 3:
         notif = (
             "[TASK 3/5 - BOUNDARY FRAUD DETECTION - Hard] "
-            "Profile is INCOMPLETE. Collect all required eligibility fields, "
-            "then apply ALL scheme eligibility rules with exact integer arithmetic. "
+            "Profile is INCOMPLETE. Collect ALL required eligibility fields "
+            "including income, then apply scheme rules with exact integer arithmetic. "
             "Approve only if ALL criteria are fully satisfied. "
             "If no scheme criteria are fully met, use reject_applicant."
         )
-        missing = ["occupation", "has_aadhaar"]
+        missing = ["occupation", "has_aadhaar", "income"]
 
     elif task == 4:
         notif = (
@@ -366,7 +367,7 @@ class SchemeEnvEnvironment(Environment):
     # FIX D3: asyncio.Lock guards shared state — prevents concurrent request corruption
     SUPPORTS_CONCURRENT_SESSIONS = False
     _shared_state = {}
-    _state_lock   = asyncio.Lock()
+    _state_lock   = threading.Lock()
 
     def __init__(self):
         super().__init__()
@@ -403,410 +404,414 @@ class SchemeEnvEnvironment(Environment):
         Start a new episode.
         seed=1-5 selects a specific task; no seed cycles 1→2→3→4→5→1.
         """
-        self._task    = seed if seed in (1, 2, 3, 4, 5) else (self._task % 5) + 1
-        self._persona = generate_dynamic_persona(self._task)
-        self._state   = State(episode_id=str(uuid4()), step_count=0)
-        self._obs     = _make_fresh_obs(self._task, self._persona)
-        self._save_shared()
-        return self._obs
+        with SchemeEnvEnvironment._state_lock:
+            self._task    = seed if seed in (1, 2, 3, 4, 5) else (self._task % 5) + 1
+            self._persona = generate_dynamic_persona(self._task)
+            self._state   = State(episode_id=str(uuid4()), step_count=0)
+            self._obs     = _make_fresh_obs(self._task, self._persona)
+            self._save_shared()
+            return self._obs
 
     def step(self, action: Action, timeout_s=None, **kwargs) -> Observation:
         """
         Execute one agent action and return the updated observation.
         """
-        self._state.step_count += 1
+        with SchemeEnvEnvironment._state_lock:
+            self._state.step_count += 1
 
-        # FIX D4: deepcopy prevents aliased mutation of shared state
-        obs          = copy.deepcopy(self._obs)
-        current_task = self._task
-        persona      = self._persona
+            # FIX D4: deepcopy prevents aliased mutation of shared state
+            obs          = copy.deepcopy(self._obs)
+            current_task = self._task
+            persona      = self._persona
 
-        valid_actions = {
-            "ask_question", "request_document",
-            "approve_scheme", "reject_applicant", "escalate",
-        }
+            valid_actions = {
+                "ask_question", "request_document",
+                "approve_scheme", "reject_applicant", "escalate",
+            }
 
-        if action.action_type not in valid_actions:
-            obs.notification = (
-                f"Unknown action '{action.action_type}'. "
-                f"Valid: {', '.join(sorted(valid_actions))}."
-            )
-            obs.reward = INVALID_STEP_PENALTY
-            obs.done   = False
-            return self._finalize_step(obs)
-
-        # ── ASK_QUESTION ──────────────────────────────────────────────────────
-        if action.action_type == "ask_question":
-            key = (action.value or "").strip()
-
-            if key == "self_reported_age":
-                obs.metadata["noise_queries"] += 1
+            if action.action_type not in valid_actions:
                 obs.notification = (
-                    "Self-reported age is already visible in the profile. "
-                    "For authoritative age verification, request the Aadhaar card."
+                    f"Unknown action '{action.action_type}'. "
+                    f"Valid: {', '.join(sorted(valid_actions))}."
                 )
                 obs.reward = INVALID_STEP_PENALTY
+                obs.done   = False
+                return self._finalize_step(obs)
 
-            elif key in NOISE_FIELDS:
-                obs.metadata["noise_queries"] += 1
-                obs.notification = "Irrelevant field. Focus on eligibility criteria only."
-                obs.reward       = INVALID_STEP_PENALTY
+            # ── ASK_QUESTION ──────────────────────────────────────────────────────
+            if action.action_type == "ask_question":
+                key = (action.value or "").strip()
 
-            elif key in obs.known_profile:
-                obs.metadata["redundant_queries"] += 1
-                obs.notification = f"'{key}' is already in the profile. Do not repeat questions."
-                obs.reward       = INVALID_STEP_PENALTY
-
-            elif key in VALID_QUERY_FIELDS and key in persona:
-                val = persona[key]
-                obs.known_profile[key] = val
-                if key in obs.missing_data:
-                    obs.missing_data.remove(key)
-                obs.metadata["relevant_queries"] += 1
-                obs.notification = f"Applicant confirmed: {key} = {val}."
-                obs.reward       = VALID_STEP_PENALTY
-
-            else:
-                obs.notification = f"'{key}' is not a recognised eligibility field."
-                obs.reward       = INVALID_STEP_PENALTY
-
-        # ── REQUEST_DOCUMENT ──────────────────────────────────────────────────
-        elif action.action_type == "request_document":
-            doc = (action.value or "document").lower()
-
-            if current_task == 4 and "pan" in doc:
-                employer = persona.get("_pan_employer", "a government organisation")
-                obs.metadata["pan_verified"]         = True
-                obs.metadata["document_verified"]    = True
-                obs.metadata["critical_discoveries"] += 1
-                obs.notification = (
-                    f"PAN card retrieved. "
-                    f"Records show this applicant has been a registered employee of "
-                    f"{employer} for the past 6 years with active pension contributions. "
-                    f"This directly contradicts the stated occupation 'student'. "
-                    f"The case cannot be approved or rejected without senior review."
-                )
-                obs.reward = VALID_STEP_PENALTY
-
-            elif current_task == 5 and "aadhaar" in doc:
-                true_age = persona.get("_aadhaar_age", "36")
-                obs.metadata["aadhaar_verified"]     = True
-                obs.metadata["document_verified"]    = True
-                obs.metadata["critical_discoveries"] += 1
-                obs.known_profile["age"]             = true_age
-                obs.notification = (
-                    f"Aadhaar card verified. "
-                    f"Official age on record: {true_age} years. "
-                    f"Note: this differs from the self-reported age of "
-                    f"{persona.get('_self_reported_age', '35')} in the profile. "
-                    f"The Aadhaar age is the authoritative value for eligibility decisions."
-                )
-                obs.reward = VALID_STEP_PENALTY
-
-            elif current_task == 5 and "pan" in doc:
-                obs.notification = (
-                    "PAN card verified. No anomalies found in tax records. "
-                    "For age verification, the Aadhaar card is the authoritative document."
-                )
-                obs.reward = VALID_STEP_PENALTY
-
-            else:
-                doc_lower = (action.value or "").lower()
-                if "aadhaar" in doc_lower and "has_aadhaar" in obs.missing_data:
-                    obs.missing_data.remove("has_aadhaar")
-                    obs.known_profile["has_aadhaar"] = "True"
-                    obs.notification = "Aadhaar card received and verified. has_aadhaar confirmed as True."
-                else:
-                    obs.notification = f"Document '{action.value or 'document'}' received and verified."
-                obs.reward = VALID_STEP_PENALTY
-
-        # ── APPROVE_SCHEME ────────────────────────────────────────────────────
-        elif action.action_type == "approve_scheme":
-            scheme = (action.value or "").strip()
-
-            if current_task == 4:
-                if not obs.metadata.get("pan_verified", False):
+                if key == "self_reported_age":
+                    obs.metadata["noise_queries"] += 1
                     obs.notification = (
-                        "PROTOCOL VIOLATION: Do not approve this case before verifying "
-                        "employment records. Request the PAN card first to check for a "
-                        "data integrity conflict."
+                        "Self-reported age is already visible in the profile. "
+                        "For authoritative age verification, request the Aadhaar card."
+                    )
+                    obs.reward = INVALID_STEP_PENALTY
+
+                elif key in NOISE_FIELDS:
+                    obs.metadata["noise_queries"] += 1
+                    obs.notification = "Irrelevant field. Focus on eligibility criteria only."
+                    obs.reward       = INVALID_STEP_PENALTY
+
+                elif key in obs.known_profile:
+                    obs.metadata["redundant_queries"] += 1
+                    obs.notification = f"'{key}' is already in the profile. Do not repeat questions."
+                    obs.reward       = INVALID_STEP_PENALTY
+
+                elif key in VALID_QUERY_FIELDS and key in persona:
+                    val = persona[key]
+                    obs.known_profile[key] = val
+                    if key in obs.missing_data:
+                        obs.missing_data.remove(key)
+                    obs.metadata["relevant_queries"] += 1
+                    obs.notification = f"Applicant confirmed: {key} = {val}."
+                    obs.reward       = VALID_STEP_PENALTY
+
+                else:
+                    obs.notification = f"'{key}' is not a recognised eligibility field."
+                    obs.reward       = INVALID_STEP_PENALTY
+
+            # ── REQUEST_DOCUMENT ──────────────────────────────────────────────────
+            elif action.action_type == "request_document":
+                doc = (action.value or "document").lower()
+
+                if current_task == 4 and "pan" in doc:
+                    employer = persona.get("_pan_employer", "a government organisation")
+                    obs.metadata["pan_verified"]         = True
+                    obs.metadata["document_verified"]    = True
+                    obs.metadata["critical_discoveries"] += 1
+                    obs.notification = (
+                        f"PAN card retrieved. "
+                        f"Records show this applicant has been a registered employee of "
+                        f"{employer} for the past 6 years with active pension contributions. "
+                        f"This directly contradicts the stated occupation 'student'. "
+                        f"The case cannot be approved or rejected without senior review."
+                    )
+                    obs.reward = VALID_STEP_PENALTY
+
+                elif current_task == 5 and "aadhaar" in doc:
+                    true_age = persona.get("_aadhaar_age", "36")
+                    obs.metadata["aadhaar_verified"]     = True
+                    obs.metadata["document_verified"]    = True
+                    obs.metadata["critical_discoveries"] += 1
+                    obs.known_profile["age"]             = true_age
+                    obs.notification = (
+                        f"Aadhaar card verified. "
+                        f"Official age on record: {true_age} years. "
+                        f"Note: this differs from the self-reported age of "
+                        f"{persona.get('_self_reported_age', '35')} in the profile. "
+                        f"The Aadhaar age is the authoritative value for eligibility decisions."
+                    )
+                    obs.reward = VALID_STEP_PENALTY
+
+                elif current_task == 5 and "pan" in doc:
+                    obs.notification = (
+                        "PAN card verified. No anomalies found in tax records. "
+                        "For age verification, the Aadhaar card is the authoritative document."
+                    )
+                    obs.reward = VALID_STEP_PENALTY
+
+                else:
+                    doc_lower = (action.value or "").lower()
+                    if "aadhaar" in doc_lower and "has_aadhaar" in obs.missing_data:
+                        obs.missing_data.remove("has_aadhaar")
+                        obs.known_profile["has_aadhaar"] = "True"
+                        obs.notification = "Aadhaar card received and verified. has_aadhaar confirmed as True."
+                    else:
+                        obs.notification = f"Document '{action.value or 'document'}' received and verified."
+                    obs.reward = VALID_STEP_PENALTY
+
+            # ── APPROVE_SCHEME ────────────────────────────────────────────────────
+            elif action.action_type == "approve_scheme":
+                scheme = (action.value or "").strip()
+
+                if current_task == 4:
+                    if not obs.metadata.get("pan_verified", False):
+                        obs.notification = (
+                            "PROTOCOL VIOLATION: Do not approve this case before verifying "
+                            "employment records. Request the PAN card first to check for a "
+                            "data integrity conflict."
+                        )
+                        obs.reward        = -1.5
+                        obs.done          = False
+                        obs.is_terminated = False
+                        return self._finalize_step(obs)
+
+                    score = 0.0
+                    obs.notification = (
+                        "FRAUD AUTHORIZATION VIOLATION: This case has a data integrity conflict. "
+                        "You cannot approve any scheme without resolving the contradiction first. "
+                        "The correct action is to escalate to a senior officer."
+                    )
+                    obs.reward        = -5.0
+                    obs.done          = True
+                    obs.is_terminated = True
+                    obs.grader_score  = score
+                    obs.metadata["grader_score"] = score
+                    return self._finalize_step(obs)
+
+                if current_task == 5 and not obs.metadata.get("aadhaar_verified", False):
+                    obs.notification = (
+                        "PROTOCOL VIOLATION: You must verify the Aadhaar card before approving "
+                        "any scheme when age is a critical eligibility factor. "
+                        "Request the Aadhaar card first."
                     )
                     obs.reward        = -1.5
                     obs.done          = False
                     obs.is_terminated = False
                     return self._finalize_step(obs)
 
-                score = 0.0
-                obs.notification = (
-                    "FRAUD AUTHORIZATION VIOLATION: This case has a data integrity conflict. "
-                    "You cannot approve any scheme without resolving the contradiction first. "
-                    "The correct action is to escalate to a senior officer."
-                )
-                obs.reward        = -5.0
-                obs.done          = True
-                obs.is_terminated = True
-                obs.grader_score  = score
-                obs.metadata["grader_score"] = score
-                return self._finalize_step(obs)
-
-            if current_task == 5 and not obs.metadata.get("aadhaar_verified", False):
-                obs.notification = (
-                    "PROTOCOL VIOLATION: You must verify the Aadhaar card before approving "
-                    "any scheme when age is a critical eligibility factor. "
-                    "Request the Aadhaar card first."
-                )
-                obs.reward        = -1.5
-                obs.done          = False
-                obs.is_terminated = False
-                return self._finalize_step(obs)
-
-            if current_task == 5 and obs.metadata.get("aadhaar_verified", False):
-                true_age = persona.get("_aadhaar_age", "36")
-                score = 0.0
-                obs.notification = (
-                    f"ELIGIBILITY VIOLATION: Aadhaar confirms age={true_age}. "
-                    f"PMKVY requires age ≤ 35. No other scheme applies to this profile. "
-                    f"The correct action is reject_applicant."
-                )
-                obs.reward        = -5.0
-                obs.done          = True
-                obs.is_terminated = True
-                obs.grader_score  = score
-                obs.metadata["grader_score"] = score
-                return self._finalize_step(obs)
-
-            if current_task == 3:
-                income_int = int(persona["income"])
-                overage    = income_int - 9999
-
-                if overage <= 100:
-                    step_reward = -1.0
-                    tier_label  = "BOUNDARY MISS"
-                elif overage <= 500:
-                    step_reward = -2.5
-                    tier_label  = "CLOSE MISS"
-                elif overage <= 2000:
-                    step_reward = -4.0
-                    tier_label  = "CLEAR MISS"
-                else:
-                    step_reward = -5.0
-                    tier_label  = "THRESHOLD VIOLATION"
-
-                score = 0.0
-                obs.notification = (
-                    f"{tier_label}: Income {persona['income']} exceeds all scheme "
-                    f"thresholds (overage: Rs {overage} above PMKVY limit). "
-                    f"Use reject_applicant when no scheme criteria are fully met."
-                )
-                obs.reward        = step_reward
-                obs.done          = True
-                obs.is_terminated = True
-                obs.grader_score  = score
-                obs.metadata["grader_score"] = score
-                return self._finalize_step(obs)
-
-            if current_task == 2 and len(obs.missing_data) > 0:
-                score = 0.0
-                obs.notification = (
-                    f"PREMATURE APPROVAL: Still missing required fields: {obs.missing_data}. "
-                    "Collect all required data before approving."
-                )
-                obs.reward        = -5.0
-                obs.done          = True
-                obs.is_terminated = True
-                obs.grader_score  = score
-                obs.metadata["grader_score"] = score
-                return self._finalize_step(obs)
-
-            optimal  = persona["optimal_scheme"]
-            eligible = persona["eligible_schemes"]
-
-            if scheme == optimal:
-                score = _compute_grader_score(
-                    task               = current_task,
-                    base_score         = 1.0,
-                    step_count         = self._state.step_count,
-                    noise_queries      = obs.metadata.get("noise_queries", 0),
-                    redundant_queries  = obs.metadata.get("redundant_queries", 0),
-                    missing_keys_total = len(persona.get("missing_keys", [])),
-                    document_verified  = obs.metadata.get("document_verified", False),
-                )
-                obs.notification  = f"CORRECT: Applicant enrolled in {scheme} — optimal scheme."
-                obs.reward        = 10.0
-                obs.done          = True
-                obs.is_terminated = True
-                obs.grader_score  = score
-                obs.metadata["grader_score"] = score
-
-            elif scheme in eligible:
-                score = _compute_grader_score(
-                    task              = current_task,
-                    base_score        = 0.5,
-                    step_count        = self._state.step_count,
-                    noise_queries     = obs.metadata.get("noise_queries", 0),
-                    redundant_queries = obs.metadata.get("redundant_queries", 0),
-                )
-                obs.notification  = f"SUBOPTIMAL: {scheme} is eligible but {optimal} provides greater benefit."
-                obs.reward        = 3.0
-                obs.done          = True
-                obs.is_terminated = True
-                obs.grader_score  = score
-                obs.metadata["grader_score"] = score
-
-            else:
-                score = 0.0
-                obs.notification  = f"ERROR: Applicant does not qualify for '{scheme}'."
-                obs.reward        = -5.0
-                obs.done          = True
-                obs.is_terminated = True
-                obs.grader_score  = score
-                obs.metadata["grader_score"] = score
-
-        # ── REJECT_APPLICANT ──────────────────────────────────────────────────
-        elif action.action_type == "reject_applicant":
-
-            if current_task == 4:
-                if not obs.metadata.get("pan_verified", False):
-                    obs.notification = (
-                        "PREMATURE ADJUDICATION: Review documentary evidence before rejecting. "
-                        "Request the PAN card to verify employment records, then escalate if a "
-                        "contradiction is confirmed."
-                    )
-                    obs.reward        = -1.0
-                    obs.done          = False
-                    obs.is_terminated = False
-                else:
-                    score = 0.0
-                    obs.notification = (
-                        "PREMATURE ADJUDICATION: The data integrity conflict must be resolved "
-                        "by a senior officer before any terminal decision. Use escalate."
-                    )
-                    obs.reward        = -3.0
-                    obs.done          = True
-                    obs.is_terminated = True
-                    obs.grader_score  = score
-                    obs.metadata["grader_score"] = score
-
-            elif current_task == 5:
-                if not obs.metadata.get("aadhaar_verified", False):
-                    obs.notification = (
-                        "PROTOCOL VIOLATION: You must verify the Aadhaar card before "
-                        "rejecting an applicant when age is a critical factor. "
-                        "Request the Aadhaar card first."
-                    )
-                    obs.reward        = -1.0
-                    obs.done          = False
-                    obs.is_terminated = False
-                else:
+                if current_task == 5 and obs.metadata.get("aadhaar_verified", False):
                     true_age = persona.get("_aadhaar_age", "36")
-                    score = _compute_grader_score(
-                        task              = current_task,
-                        base_score        = 1.0,
-                        step_count        = self._state.step_count,
-                        noise_queries     = obs.metadata.get("noise_queries", 0),
-                        redundant_queries = obs.metadata.get("redundant_queries", 0),
-                        document_verified = True,
-                    )
-                    obs.notification  = (
-                        f"CORRECT REJECTION: Aadhaar confirms age={true_age}, "
-                        f"which exceeds the PMKVY maximum of 35. "
-                        f"No other scheme criteria are satisfied. Rejection is valid."
-                    )
-                    obs.reward        = 5.0
-                    obs.done          = True
-                    obs.is_terminated = True
-                    obs.grader_score  = score
-                    obs.metadata["grader_score"] = score
-
-            elif current_task == 3:
-                if "income" not in obs.known_profile:
                     score = 0.0
                     obs.notification = (
-                        "PROTOCOL VIOLATION: You must collect income data before "
-                        "making a rejection decision."
+                        f"ELIGIBILITY VIOLATION: Aadhaar confirms age={true_age}. "
+                        f"PMKVY requires age ≤ 35. No other scheme applies to this profile. "
+                        f"The correct action is reject_applicant."
                     )
-                    obs.reward        = -2.0
+                    obs.reward        = -5.0
                     obs.done          = True
                     obs.is_terminated = True
                     obs.grader_score  = score
                     obs.metadata["grader_score"] = score
-                else:
-                    score = _compute_grader_score(
-                        task              = current_task,
-                        base_score        = 1.0,
-                        step_count        = self._state.step_count,
-                        noise_queries     = obs.metadata.get("noise_queries", 0),
-                        redundant_queries = obs.metadata.get("redundant_queries", 0),
-                    )
-                    obs.notification  = (
-                        f"CORRECT REJECTION: Income {persona['income']} exceeds all scheme "
-                        f"thresholds. No eligible scheme found."
-                    )
-                    obs.reward        = 5.0
-                    obs.done          = True
-                    obs.is_terminated = True
-                    obs.grader_score  = score
-                    obs.metadata["grader_score"] = score
-
-            else:
-                score = 0.0
-                obs.notification  = (
-                    "ERROR: This applicant qualifies for a welfare scheme. "
-                    "Review the eligibility criteria and approve the correct scheme."
-                )
-                obs.reward        = -5.0
-                obs.done          = True
-                obs.is_terminated = True
-                obs.grader_score  = score
-                obs.metadata["grader_score"] = score
-
-        # ── ESCALATE ──────────────────────────────────────────────────────────
-        elif action.action_type == "escalate":
-
-            if current_task == 4:
-                verified = obs.metadata.get("pan_verified", False)
-                if not verified:
-                    obs.notification = (
-                        "INSUFFICIENT BASIS FOR ESCALATION: First request the PAN card to "
-                        "verify the suspected employment contradiction. Escalate after the "
-                        "document confirms the conflict."
-                    )
-                    obs.reward        = -1.0
-                    obs.done          = False
-                    obs.is_terminated = False
                     return self._finalize_step(obs)
 
-                obs.reward = 10.0
-                score    = _compute_grader_score(
-                    task              = current_task,
-                    base_score        = 1.0,
-                    step_count        = self._state.step_count,
-                    noise_queries     = obs.metadata.get("noise_queries", 0),
-                    redundant_queries = obs.metadata.get("redundant_queries", 0),
-                    document_verified = verified,
-                )
-                obs.notification  = (
-                    "CORRECT ESCALATION: Contradictory data detected and properly handed "
-                    "off to a senior officer for manual verification. "
-                    "This is the required protocol for data integrity conflicts."
-                )
-                obs.done          = True
-                obs.is_terminated = True
-                obs.grader_score  = score
-                obs.metadata["grader_score"] = score
+                if current_task == 3:
+                    income_int = int(persona["income"])
+                    overage    = income_int - 9999
 
-            else:
-                obs.notification = (
-                    "INCORRECT ESCALATION: Escalation is only appropriate when data "
-                    "integrity is genuinely compromised. This case has sufficient "
-                    "information for a direct decision. Please reconsider."
-                )
-                obs.reward        = -2.0
-                obs.done          = False
-                obs.is_terminated = False
-                # grader_score stays None — episode continues
+                    if overage <= 100:
+                        step_reward = -1.0
+                        tier_label  = "BOUNDARY MISS"
+                    elif overage <= 500:
+                        step_reward = -2.5
+                        tier_label  = "CLOSE MISS"
+                    elif overage <= 2000:
+                        step_reward = -4.0
+                        tier_label  = "CLEAR MISS"
+                    else:
+                        step_reward = -5.0
+                        tier_label  = "THRESHOLD VIOLATION"
 
-        return self._finalize_step(obs)
+                    score = 0.0
+                    obs.notification = (
+                        f"{tier_label}: Income {persona['income']} exceeds all scheme "
+                        f"thresholds (overage: Rs {overage} above PMKVY limit). "
+                        f"Use reject_applicant when no scheme criteria are fully met."
+                    )
+                    obs.reward        = step_reward
+                    obs.done          = True
+                    obs.is_terminated = True
+                    obs.grader_score  = score
+                    obs.metadata["grader_score"] = score
+                    return self._finalize_step(obs)
+
+                if current_task in (1, 2) and len(obs.missing_data) > 0:
+                    score = 0.0
+                    obs.notification = (
+                        f"PREMATURE APPROVAL: Still missing required fields: {obs.missing_data}. "
+                        "Collect all required data before approving."
+                    )
+                    obs.reward        = -5.0
+                    obs.done          = True
+                    obs.is_terminated = True
+                    obs.grader_score  = score
+                    obs.metadata["grader_score"] = score
+                    return self._finalize_step(obs)
+
+                optimal  = persona["optimal_scheme"]
+                eligible = persona["eligible_schemes"]
+
+                if scheme == optimal:
+                    score = _compute_grader_score(
+                        task               = current_task,
+                        base_score         = 1.0,
+                        step_count         = self._state.step_count,
+                        noise_queries      = obs.metadata.get("noise_queries", 0),
+                        redundant_queries  = obs.metadata.get("redundant_queries", 0),
+                        missing_keys_total = len(persona.get("missing_keys", [])),
+                        document_verified  = obs.metadata.get("document_verified", False),
+                    )
+                    obs.notification  = f"CORRECT: Applicant enrolled in {scheme} — optimal scheme."
+                    obs.reward        = 10.0
+                    obs.done          = True
+                    obs.is_terminated = True
+                    obs.grader_score  = score
+                    obs.metadata["grader_score"] = score
+
+                elif scheme in eligible:
+                    score = _compute_grader_score(
+                        task              = current_task,
+                        base_score        = 0.5,
+                        step_count        = self._state.step_count,
+                        noise_queries     = obs.metadata.get("noise_queries", 0),
+                        redundant_queries = obs.metadata.get("redundant_queries", 0),
+                    )
+                    obs.notification  = f"SUBOPTIMAL: {scheme} is eligible but {optimal} provides greater benefit."
+                    obs.reward        = 3.0
+                    obs.done          = True
+                    obs.is_terminated = True
+                    obs.grader_score  = score
+                    obs.metadata["grader_score"] = score
+
+                else:
+                    score = 0.0
+                    obs.notification  = f"ERROR: Applicant does not qualify for '{scheme}'."
+                    obs.reward        = -5.0
+                    obs.done          = True
+                    obs.is_terminated = True
+                    obs.grader_score  = score
+                    obs.metadata["grader_score"] = score
+
+            # ── REJECT_APPLICANT ──────────────────────────────────────────────────
+            elif action.action_type == "reject_applicant":
+
+                if current_task == 4:
+                    if not obs.metadata.get("pan_verified", False):
+                        obs.notification = (
+                            "PREMATURE ADJUDICATION: Review documentary evidence before rejecting. "
+                            "Request the PAN card to verify employment records, then escalate if a "
+                            "contradiction is confirmed."
+                        )
+                        obs.reward        = -1.0
+                        obs.done          = False
+                        obs.is_terminated = False
+                    else:
+                        score = 0.0
+                        obs.notification = (
+                            "PREMATURE ADJUDICATION: The data integrity conflict must be resolved "
+                            "by a senior officer before any terminal decision. Use escalate."
+                        )
+                        obs.reward        = -3.0
+                        obs.done          = True
+                        obs.is_terminated = True
+                        obs.grader_score  = score
+                        obs.metadata["grader_score"] = score
+
+                elif current_task == 5:
+                    if not obs.metadata.get("aadhaar_verified", False):
+                        obs.notification = (
+                            "PROTOCOL VIOLATION: You must verify the Aadhaar card before "
+                            "rejecting an applicant when age is a critical factor. "
+                            "Request the Aadhaar card first."
+                        )
+                        obs.reward        = -1.0
+                        obs.done          = False
+                        obs.is_terminated = False
+                    else:
+                        true_age = persona.get("_aadhaar_age", "36")
+                        score = _compute_grader_score(
+                            task              = current_task,
+                            base_score        = 1.0,
+                            step_count        = self._state.step_count,
+                            noise_queries     = obs.metadata.get("noise_queries", 0),
+                            redundant_queries = obs.metadata.get("redundant_queries", 0),
+                            document_verified = True,
+                        )
+                        obs.notification  = (
+                            f"CORRECT REJECTION: Aadhaar confirms age={true_age}, "
+                            f"which exceeds the PMKVY maximum of 35. "
+                            f"No other scheme criteria are satisfied. Rejection is valid."
+                        )
+                        obs.reward        = 5.0
+                        obs.done          = True
+                        obs.is_terminated = True
+                        obs.grader_score  = score
+                        obs.metadata["grader_score"] = score
+
+                elif current_task == 3:
+                    if "income" not in obs.known_profile:
+                        score = 0.0
+                        obs.notification = (
+                            "PROTOCOL VIOLATION: You must collect income data before "
+                            "making a rejection decision."
+                        )
+                        obs.reward        = -2.0
+                        obs.done          = True
+                        obs.is_terminated = True
+                        obs.grader_score  = score
+                        obs.metadata["grader_score"] = score
+                    else:
+                        score = _compute_grader_score(
+                            task              = current_task,
+                            base_score        = 1.0,
+                            step_count        = self._state.step_count,
+                            noise_queries     = obs.metadata.get("noise_queries", 0),
+                            redundant_queries = obs.metadata.get("redundant_queries", 0),
+                        )
+                        obs.notification  = (
+                            f"CORRECT REJECTION: Income {persona['income']} exceeds all scheme "
+                            f"thresholds. No eligible scheme found."
+                        )
+                        obs.reward        = 5.0
+                        obs.done          = True
+                        obs.is_terminated = True
+                        obs.grader_score  = score
+                        obs.metadata["grader_score"] = score
+
+                else:
+                    score = 0.0
+                    obs.notification  = (
+                        "ERROR: This applicant qualifies for a welfare scheme. "
+                        "Review the eligibility criteria and approve the correct scheme."
+                    )
+                    obs.reward        = -5.0
+                    obs.done          = True
+                    obs.is_terminated = True
+                    obs.grader_score  = score
+                    obs.metadata["grader_score"] = score
+
+            # ── ESCALATE ──────────────────────────────────────────────────────────
+            elif action.action_type == "escalate":
+
+                if current_task == 4:
+                    verified = obs.metadata.get("pan_verified", False)
+                    if not verified:
+                        obs.notification = (
+                            "INSUFFICIENT BASIS FOR ESCALATION: First request the PAN card to "
+                            "verify the suspected employment contradiction. Escalate after the "
+                            "document confirms the conflict."
+                        )
+                        obs.reward        = -1.0
+                        obs.done          = False
+                        obs.is_terminated = False
+                        return self._finalize_step(obs)
+
+                    obs.reward = 10.0
+                    score    = _compute_grader_score(
+                        task              = current_task,
+                        base_score        = 1.0,
+                        step_count        = self._state.step_count,
+                        noise_queries     = obs.metadata.get("noise_queries", 0),
+                        redundant_queries = obs.metadata.get("redundant_queries", 0),
+                        document_verified = verified,
+                    )
+                    obs.notification  = (
+                        "CORRECT ESCALATION: Contradictory data detected and properly handed "
+                        "off to a senior officer for manual verification. "
+                        "This is the required protocol for data integrity conflicts."
+                    )
+                    obs.done          = True
+                    obs.is_terminated = True
+                    obs.grader_score  = score
+                    obs.metadata["grader_score"] = score
+
+                else:
+                    obs.notification = (
+                        "INCORRECT ESCALATION: Escalation is only appropriate when data "
+                        "integrity is genuinely compromised. This case has sufficient "
+                        "information for a direct decision. Please reconsider."
+                    )
+                    score = 0.0
+                    obs.reward        = -2.0       
+                    obs.done          = True
+                    obs.is_terminated = True
+                    obs.grader_score  = score
+                    obs.metadata["grader_score"] = score
+
+            return self._finalize_step(obs)
 
     def _finalize_step(self, obs: Observation) -> Observation:
         """
@@ -824,7 +829,18 @@ class SchemeEnvEnvironment(Environment):
 
         self._obs = obs
         self._save_shared()
-        return obs
+
+        # Strip internal tracking fields before returning to agent.
+        # self._obs retains full metadata for step logic on subsequent steps.
+        # The agent only sees noise/redundant/relevant query counts.
+        import copy
+        agent_obs = copy.deepcopy(obs)
+        agent_obs.metadata = {
+            "noise_queries":     obs.metadata.get("noise_queries", 0),
+            "redundant_queries": obs.metadata.get("redundant_queries", 0),
+            "relevant_queries":  obs.metadata.get("relevant_queries", 0),
+        }
+        return agent_obs
 
     @property
     def state(self) -> State:

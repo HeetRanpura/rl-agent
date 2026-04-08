@@ -8,11 +8,7 @@ app: server.app:app
 port: 7860
 max_steps: 20
 health_check: /health
-env_variables:
-  - API_BASE_URL
-  - MODEL_NAME
-  - HF_TOKEN
-  - OPENAI_API_KEY
+env_variables: []
 resources:
   cpu: 2
   memory_gb: 8

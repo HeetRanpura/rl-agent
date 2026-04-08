@@ -32,6 +32,7 @@ INFERENCE_TEMPERATURE = float(os.getenv("INFERENCE_TEMPERATURE", "0.0"))
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "1500"))
 BENCHMARK = "scheme_env"
 MAX_STEPS = 20
+N_REPEATS = int(os.getenv("N_REPEATS", "3"))  # episodes per task for score averaging
 
 TASK_NAMES = {
     1: "scheme_discovery",
@@ -215,62 +216,6 @@ Benefit values: PMAY (Rs 1.2 lakh) > MGNREGS (100 days wages) > PMKVY (Rs 8,000)
    request_document("aadhaar_card") followed by reject_applicant("AGE_EXCEEDED")."""
 
 
-def _maybe_apply_task_guardrail(observation: dict) -> Optional[dict]:
-    """
-    Hard-task guardrails for required verification protocols.
-    These only trigger when the task framing clearly implies a mandatory
-    document check, preventing the baseline from skipping PAN/Aadhaar
-    verification on Tasks 4 and 5.
-    """
-    profile = observation.get("known_profile", {})
-    notification = str(observation.get("notification", ""))
-
-    occupation = str(profile.get("occupation", "")).strip().lower()
-    try:
-        income = int(str(profile.get("income", "0")))
-    except ValueError:
-        income = 0
-    try:
-        age = int(str(profile.get("age", "0")))
-    except ValueError:
-        age = 0
-
-    if "ESCALATION DILEMMA" in notification:
-        if "PAN card retrieved" not in notification and occupation == "student" and income >= 10000:
-            return {"action_type": "request_document", "value": "pan_card"}
-
-    if "DOCUMENT CONFLICT" in notification:
-        if "Aadhaar card verified" not in notification and age >= 35:
-            return {"action_type": "request_document", "value": "aadhaar_card"}
-
-    return None
-
-
-def _is_dumb_failure(action: dict, observation: dict) -> bool:
-    """
-    Detect protocol-skipping terminal actions on the hard verification tasks.
-    Good model behavior passes through untouched; only obviously premature
-    terminal actions trigger the silent corrective guardrail.
-    """
-    if not action:
-        return False
-
-    notification = str(observation.get("notification", ""))
-    action_type = str(action.get("action_type", "")).strip()
-    terminal_actions = {"approve_scheme", "reject_applicant", "escalate"}
-
-    if action_type not in terminal_actions:
-        return False
-
-    if "ESCALATION DILEMMA" in notification and "PAN card retrieved" not in notification:
-        return True
-
-    if "DOCUMENT CONFLICT" in notification and "Aadhaar card verified" not in notification:
-        return True
-
-    return False
-
-
 def _parse_action_response(raw: str) -> tuple[Optional[dict], Optional[str]]:
     """
     Extract a single action JSON object from the model response.
@@ -286,6 +231,7 @@ def _parse_action_response(raw: str) -> tuple[Optional[dict], Optional[str]]:
         return None, "JSON_PARSE_ERROR"
 
 
+# No scaffolding — model must reason about document verification from system prompt rules alone.
 def get_agent_action(observation: dict, history: list):
     """
     Query the LLM with the current observation.
@@ -322,12 +268,6 @@ def get_agent_action(observation: dict, history: list):
     action, parse_error = _parse_action_response(raw)
     if parse_error:
         return None, raw, parse_error
-
-    if _is_dumb_failure(action, observation):
-        guardrail_action = _maybe_apply_task_guardrail(observation)
-        if guardrail_action is not None:
-            raw = json.dumps(guardrail_action)
-            return guardrail_action, raw, None
 
     return action, raw, None
 
@@ -431,38 +371,60 @@ def run_episode(task: int) -> float:
 
 
 def main():
+    import statistics
+
     print(f"\n{'='*60}", flush=True)
     print(f"  SCHEME ENV — OPTION A EVALUATION", flush=True)
-    print(f"  Model : {MODEL_NAME}", flush=True)
-    print(f"  Env   : {ENV_URL}", flush=True)
+    print(f"  Model    : {MODEL_NAME}", flush=True)
+    print(f"  Env      : {ENV_URL}", flush=True)
+    print(f"  Repeats  : {N_REPEATS} per task", flush=True)
     print(f"{'='*60}", flush=True)
 
-    scores = {}
+    # Run each task N_REPEATS times sequentially, then average.
+    # env_reset is called at the start of each run_episode, so no manual reset needed.
+    mean_scores = {}
+    std_scores  = {}
     for task in [1, 2, 3, 4, 5]:
-        try:
-            scores[task] = run_episode(task)
-        except Exception as e:
-            print(f"\n  [ERROR] Task {task} failed: {e}", flush=True)
-            scores[task] = 0.0
-        time.sleep(1)
+        repeat_scores = []
+        for repeat in range(1, N_REPEATS + 1):
+            print(f"\n  [Task {task} — repeat {repeat}/{N_REPEATS}]", flush=True)
+            try:
+                s = run_episode(task)
+            except Exception as e:
+                print(f"\n  [ERROR] Task {task} repeat {repeat} failed: {e}", flush=True)
+                s = 0.0
+            repeat_scores.append(s)
+            time.sleep(1)
+        mean_scores[task] = round(sum(repeat_scores) / len(repeat_scores), 4)
+        std_scores[task]  = round(
+            statistics.stdev(repeat_scores) if len(repeat_scores) > 1 else 0.0, 4
+        )
 
-    avg = sum(scores.values()) / len(scores)
+    avg = sum(mean_scores.values()) / len(mean_scores)
 
+    task_labels = {
+        1: "Scheme Discovery   ",
+        2: "Missing Data       ",
+        3: "Boundary Fraud     ",
+        4: "Escalation Dilemma ",
+        5: "Document Conflict  ",
+    }
     print(f"\n{'='*60}", flush=True)
-    print(f"  FINAL GRADER SCORES", flush=True)
+    print(f"  FINAL GRADER SCORES  (mean ± std over {N_REPEATS} repeats)", flush=True)
     print(f"{'='*60}", flush=True)
-    print(f"  Task 1 (Scheme Discovery)    : {scores[1]:.3f} / 1.0", flush=True)
-    print(f"  Task 2 (Missing Data)        : {scores[2]:.3f} / 1.0", flush=True)
-    print(f"  Task 3 (Boundary Fraud)      : {scores[3]:.3f} / 1.0", flush=True)
-    print(f"  Task 4 (Escalation Dilemma)  : {scores[4]:.3f} / 1.0", flush=True)
-    print(f"  Task 5 (Document Conflict)   : {scores[5]:.3f} / 1.0", flush=True)
+    for t in [1, 2, 3, 4, 5]:
+        print(
+            f"  Task {t} ({task_labels[t]}): "
+            f"{mean_scores[t]:.3f} ± {std_scores[t]:.3f} / 1.0",
+            flush=True,
+        )
     print(f"  Average                      : {avg:.3f} / 1.0", flush=True)
     print(f"{'='*60}", flush=True)
 
-    # FIX E6: structured JSON score output for benchmark_runner.py parsing.
-    # benchmark_runner can now parse these lines instead of fragile regex on print strings.
-    for t, s in scores.items():
-        print(f"SCORE_JSON {json.dumps({'task': t, 'score': s})}", flush=True)
+    # Structured JSON output for benchmark_runner.py parsing.
+    for t in [1, 2, 3, 4, 5]:
+        print(f"SCORE_JSON {json.dumps({'task': t, 'score': mean_scores[t]})}", flush=True)
+        print(f"STD_JSON {json.dumps({'task': t, 'std': std_scores[t]})}", flush=True)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,30 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.3, pytest-9.0.2, pluggy-1.6.0 -- /Users/advikdivekar/Desktop/OpenEnv/venv/bin/python3.14
+cachedir: .pytest_cache
+rootdir: /Users/advikdivekar/Desktop/OpenEnv
+configfile: pyproject.toml
+plugins: anyio-4.13.0
+collecting ... collected 20 items
+
+tests/test_scheme_eligibility.py::test_pmkvy_qualifies_age_lower_bound PASSED [  5%]
+tests/test_scheme_eligibility.py::test_pmkvy_qualifies_age_upper_bound PASSED [ 10%]
+tests/test_scheme_eligibility.py::test_pmkvy_disqualifies_age_exceeded PASSED [ 15%]
+tests/test_scheme_eligibility.py::test_pmkvy_disqualifies_income_exceeded PASSED [ 20%]
+tests/test_scheme_eligibility.py::test_pmkvy_disqualifies_wrong_occupation PASSED [ 25%]
+tests/test_scheme_eligibility.py::test_mgnregs_qualifies_age_lower_bound PASSED [ 30%]
+tests/test_scheme_eligibility.py::test_mgnregs_qualifies_age_upper_bound PASSED [ 35%]
+tests/test_scheme_eligibility.py::test_mgnregs_disqualifies_age_exceeded PASSED [ 40%]
+tests/test_scheme_eligibility.py::test_mgnregs_disqualifies_no_aadhaar PASSED [ 45%]
+tests/test_scheme_eligibility.py::test_pmay_qualifies_age_lower_bound PASSED [ 50%]
+tests/test_scheme_eligibility.py::test_pmay_disqualifies_income_at_threshold PASSED [ 55%]
+tests/test_scheme_eligibility.py::test_pmay_qualifies_age_upper_bound PASSED [ 60%]
+tests/test_scheme_eligibility.py::test_pmay_disqualifies_age_exceeded PASSED [ 65%]
+tests/test_scheme_eligibility.py::test_optimal_prefers_pmay_over_pmkvy PASSED [ 70%]
+tests/test_scheme_eligibility.py::test_optimal_mgnregs_only PASSED       [ 75%]
+tests/test_scheme_eligibility.py::test_optimal_none_when_no_scheme PASSED [ 80%]
+tests/test_scheme_eligibility.py::test_grader_score_perfect PASSED       [ 85%]
+tests/test_scheme_eligibility.py::test_grader_score_noise_penalty PASSED [ 90%]
+tests/test_scheme_eligibility.py::test_grader_score_zero_base PASSED     [ 95%]
+tests/test_scheme_eligibility.py::test_grader_score_floor_at_030 PASSED  [100%]
+
+============================== 20 passed in 2.38s ==============================
